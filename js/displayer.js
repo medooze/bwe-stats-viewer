@@ -28,26 +28,38 @@ class Accumulator
 ;
 
 const Metadata = {
-	transportSeqNum: 0,
-	feedbackNum: 1,
-	size: 2,
-	sent: 3,
-	recv: 4,
-	deltaSent: 5,
-	deltaRecv: 6,
-	delta: 7,
-	bwe: 8,
-	rtt: 9,
-	lost: "lost",
-	delay: "delay",
-	bitrate: "bitrate",
-	ts: "ts"
+	fb			: 0,
+	transportSeqNum		: 1,
+	feedbackNum		: 2,
+	size			: 3,
+	sent			: 4,
+	recv			: 5,
+	deltaSent		: 6,
+	deltaRecv		: 7,
+	delta			: 8,
+	bwe			: 9,
+	rtt			: 10,
+	mark			: 11,
+	rtx			: 12,
+	probing			: 13,
+	lost			: "l",
+	delay			: "d",
+	target			: "t",
+	bitrate			: "b",
+	bitrateMedia		: "m",
+	bitrateRTX		: "x",
+	bitrateProbing		: "p",
+	ts			: "t",
+	fbDelay			: "f",
+	
 };
 
 // Convert CSV file to array of data points, adding the neccesary info
 function Process (csv)
 {
-	const bitrate = new Accumulator (1000000);
+	const bitrate		= new Accumulator (1000000);
+	const bitrateRTX	= new Accumulator (1000000);
+	const bitrateProbing	= new Accumulator (1000000);
 	const data = [];
 	let lost = 0;
 	let minRTT = 0;
@@ -69,7 +81,10 @@ function Process (csv)
 			point[Metadata.lost] = lost;
 		}
 		//Add sent bitrate
-		point[Metadata.bitrate] = bitrate.accumulate (point[Metadata.sent], point[Metadata.size] * 8);
+		point[Metadata.bitrate]		= bitrate.accumulate (point[Metadata.sent], point[Metadata.size] * 8);
+		point[Metadata.bitrateMedia]	= bitrate.accumulate (point[Metadata.sent], !point[Metadata.rtx] && !point[Metadata.probing] ? point[Metadata.size] * 8 : 0);
+		point[Metadata.bitrateRTX]	= bitrate.accumulate (point[Metadata.sent], point[Metadata.rtx] ? point[Metadata.size] * 8 : 0);
+		point[Metadata.bitrateProbing]	= bitrate.accumulate (point[Metadata.sent], point[Metadata.probing] ? point[Metadata.size] * 8 : 0);
 		//Get accumulated delta
 		acumulatedDelta += point[Metadata.delta];
 		//Check min/maxs
@@ -81,13 +96,24 @@ function Process (csv)
 		point[Metadata.delay] = acumulatedDelta;
 		//Set sent time as Date
 		point[Metadata.ts] = new Date (point[Metadata.sent] / 1000);
+		//Set the delay of the feedback
+		point[Metadata.fbDelay] = (point[Metadata.fb] - point[Metadata.fb])/1000;
 		//append to data
 		data.push (point);
 	}
 
-	//Set base delay to 0
+	let i = 0;
 	for (const point of data)
+	{
+		//Set base delay to 0
 		point[Metadata.delay] = (point[Metadata.delay] - minAcumulatedDelta) / 1000;
+		//Find what is the estimation when this packet was sent
+		while (i<data.length && point[Metadata.sent]<data[i][Metadata.fb])
+			//Skip until the estimation is newer than the packet time
+			i++;
+		//Set target to previous estimate
+		point[Metadata.target] = i ? data[i-1][Metadata.bwe] : 0;
+	}
 	return data;
 }
 
@@ -226,34 +252,34 @@ function DisplayData (csv)
 		mbpsAxis.renderer.grid.template.strokeOpacity = 0.07;
 		mbpsAxis.tooltip.disabled = true;
 
-
-		var bweSeries = chart.series.push (new am4charts.LineSeries ());
-		bweSeries.name = "BWE";
-		bweSeries.dataFields.dateX = Metadata.ts;
-		bweSeries.dataFields.valueY = Metadata.bwe;
-		bweSeries.yAxis = mbpsAxis;
-		//bweSeries.xAxis = sentAxis;
-		bweSeries.tooltipText = "{name}: {valueY.formatNumber(\"#.###a'bps'\")}";
-		bweSeries.fill = am4core.color (colorHash.hex ("bweSeries"));
-		bweSeries.stroke = am4core.color (colorHash.hex ("bweSeries"));
-		bweSeries.startLocation = 0;
-		bweSeries.connect = false;
-		bweSeries.autoGapCount = 100;
-		//series.strokeWidth = 3;
-
-		var bitrateSeries = chart.series.push (new am4charts.LineSeries ());
-		bitrateSeries.name = "Bitrate";
-		bitrateSeries.dataFields.dateX = Metadata.ts;
-		bitrateSeries.dataFields.valueY = Metadata.bitrate;
-		bitrateSeries.yAxis = mbpsAxis;
-		//bitrateSeries.xAxis = sentAxis;
-		bitrateSeries.tooltipText = "{name}: {valueY.formatNumber(\"#.###a'bps'\")}";
-		bitrateSeries.fill = am4core.color (colorHash.hex ("bitrateSeries"));
-		bitrateSeries.stroke = am4core.color (colorHash.hex ("bitrateSeries"));
-		bitrateSeries.startLocation = 0;
-		bitrateSeries.connect = false;
-		bitrateSeries.autoGapCount = 100;
-
+		function createBitrateSerie(name,field)
+		{
+			//create color
+			const color = am4core.color (colorHash.hex (name));
+			//Create serie
+			const serie = chart.series.push (new am4charts.LineSeries ());
+			serie.name = name;
+			serie.dataFields.dateX = Metadata.ts;
+			serie.dataFields.valueY = field;
+			serie.yAxis = mbpsAxis;
+			//bweSeries.xAxis = sentAxis;
+			serie.tooltipText = "{name}: {valueY.formatNumber(\"#.###a'bps'\")}";
+			serie.fill = color;
+			serie.stroke = color;
+			serie.startLocation = 0;
+			serie.connect = false;
+			serie.autoGapCount = 100;
+			//Done
+			return serie;
+		}
+		
+		//Create all the series
+		createBitrateSerie("BWE"	, Metadata.bwe);
+		createBitrateSerie("Target"	, Metadata.target);
+		createBitrateSerie("Total"	, Metadata.bitrate);
+		createBitrateSerie("Media"	, Metadata.bitrateMedia);
+		createBitrateSerie("RTX"	, Metadata.bitrateRTX);
+		createBitrateSerie("Probing"	, Metadata.bitrateProbing);
 	}
 
 
