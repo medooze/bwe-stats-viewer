@@ -42,15 +42,15 @@ const Metadata = {
 	mark			: 11,
 	rtx			: 12,
 	probing			: 13,
-	lost			: "l",
-	delay			: "d",
-	target			: "t",
-	bitrate			: "b",
-	bitrateMedia		: "m",
-	bitrateRTX		: "x",
-	bitrateProbing		: "p",
-	ts			: "t",
-	fbDelay			: "f",
+	lost			: "lost",
+	delay			: "delay",
+	target			: "target",
+	bitrate			: "bitrate",
+	bitrateMedia		: "bitrateMedia",
+	bitrateRTX		: "bitrateRTX",
+	bitrateProbing		: "bitrateProbing",
+	ts			: "ts",
+	fbDelay			: "fbDelay",
 	
 };
 
@@ -58,6 +58,7 @@ const Metadata = {
 function Process (csv)
 {
 	const bitrate		= new Accumulator (1000000);
+	const bitrateMedia	= new Accumulator (1000000);
 	const bitrateRTX	= new Accumulator (1000000);
 	const bitrateProbing	= new Accumulator (1000000);
 	const data = [];
@@ -82,9 +83,9 @@ function Process (csv)
 		}
 		//Add sent bitrate
 		point[Metadata.bitrate]		= bitrate.accumulate (point[Metadata.sent], point[Metadata.size] * 8);
-		point[Metadata.bitrateMedia]	= bitrate.accumulate (point[Metadata.sent], !point[Metadata.rtx] && !point[Metadata.probing] ? point[Metadata.size] * 8 : 0);
-		point[Metadata.bitrateRTX]	= bitrate.accumulate (point[Metadata.sent], point[Metadata.rtx] ? point[Metadata.size] * 8 : 0);
-		point[Metadata.bitrateProbing]	= bitrate.accumulate (point[Metadata.sent], point[Metadata.probing] ? point[Metadata.size] * 8 : 0);
+		point[Metadata.bitrateMedia]	= bitrateMedia.accumulate (point[Metadata.sent], !point[Metadata.rtx] && !point[Metadata.probing] ? point[Metadata.size] * 8 : 0);
+		point[Metadata.bitrateRTX]	= bitrateRTX.accumulate (point[Metadata.sent], point[Metadata.rtx] ? point[Metadata.size] * 8 : 0);
+		point[Metadata.bitrateProbing]	= bitrateProbing.accumulate (point[Metadata.sent], point[Metadata.probing] ? point[Metadata.size] * 8 : 0);
 		//Get accumulated delta
 		acumulatedDelta += point[Metadata.delta];
 		//Check min/maxs
@@ -95,9 +96,9 @@ function Process (csv)
 		//Set network buffer delay
 		point[Metadata.delay] = acumulatedDelta;
 		//Set sent time as Date
-		point[Metadata.ts] = new Date (point[Metadata.sent] / 1000);
+		point[Metadata.ts] = new Date(point[Metadata.sent] / 1000);
 		//Set the delay of the feedback
-		point[Metadata.fbDelay] = (point[Metadata.fb] - point[Metadata.fb])/1000;
+		point[Metadata.fbDelay] = (point[Metadata.fb] - point[Metadata.sent])/1000;
 		//append to data
 		data.push (point);
 	}
@@ -108,7 +109,7 @@ function Process (csv)
 		//Set base delay to 0
 		point[Metadata.delay] = (point[Metadata.delay] - minAcumulatedDelta) / 1000;
 		//Find what is the estimation when this packet was sent
-		while (i<data.length && point[Metadata.sent]<data[i][Metadata.fb])
+		while (i<data.length && data[i][Metadata.sent]<point[Metadata.fb])
 			//Skip until the estimation is newer than the packet time
 			i++;
 		//Set target to previous estimate
@@ -143,6 +144,8 @@ function DisplayData (csv)
 		const chart = container.createChild (am4charts.XYChart);
 		//Set padding
 		chart.padding (10, 15, 10, 15);
+		//Use utc time
+		chart.dateFormatter.utc = true;
 		//Create legend
 		chart.legend = new am4charts.Legend ();
 		chart.legend.parent = chart.plotContainer;
@@ -319,29 +322,29 @@ function DisplayData (csv)
 		msAxis.renderer.grid.template.strokeOpacity = 0.07;
 		msAxis.tooltip.disabled = true;
 
-		var rttSeries = chart.series.push (new am4charts.LineSeries ());
-		rttSeries.name = "RTT";
-		rttSeries.dataFields.dateX = Metadata.ts;
-		rttSeries.dataFields.valueY = Metadata.rtt;
-		rttSeries.yAxis = msAxis;
-		rttSeries.tooltipText = "{name}: {valueY}ms";
-		rttSeries.fill = am4core.color (colorHash.hex ("rttSeries"));
-		rttSeries.stroke = am4core.color (colorHash.hex ("rttSeries"));
-		rttSeries.startLocation = 0;
-		rttSeries.connect = false;
-		rttSeries.autoGapCount = 100;
+		function createMSSeries(name,field)
+		{
+			//create color
+			const color = am4core.color (colorHash.hex (name));
+			//Create serie
+			const serie = chart.series.push (new am4charts.LineSeries ());
+			serie.name = name;
+			serie.dataFields.dateX = Metadata.ts;
+			serie.dataFields.valueY = field;
+			serie.yAxis = msAxis;
+			serie.tooltipText = "{name}: {valueY}ms";
+			serie.fill = color;
+			serie.stroke = color;
+			serie.startLocation = 0;
+			serie.connect = false;
+			serie.autoGapCount = 100;
+			//Done
+			return serie;
+		}
 		
-		var delaySeries = chart.series.push (new am4charts.LineSeries ());
-		delaySeries.name = "delay";
-		delaySeries.dataFields.dateX = Metadata.ts;
-		delaySeries.dataFields.valueY = Metadata.delay;
-		delaySeries.yAxis = msAxis;
-		delaySeries.tooltipText = "{name}: {valueY}ms";
-		delaySeries.fill = am4core.color (colorHash.hex ("delaySeries"));
-		delaySeries.stroke = am4core.color (colorHash.hex ("delaySeries"));
-		delaySeries.startLocation = 0;
-		delaySeries.connect = false;
-		delaySeries.autoGapCount = 100;
+		createMSSeries("RTT"		, Metadata.rtt);
+		createMSSeries("Network delay"	, Metadata.delay);
+		createMSSeries("Feedback delay"	, Metadata.fbDelay);
 		
 	}
 
