@@ -24,8 +24,7 @@ class Accumulator
 		return this.accumulated*this.factor;
 	}
 
-}
-;
+};
 
 const Metadata = {
 	fb			: 0,
@@ -53,6 +52,7 @@ const Metadata = {
 	fbDelay			: "fbDelay",
 	
 };
+const data = [];
 
 // Convert CSV file to array of data points, adding the neccesary info
 function Process (csv)
@@ -61,7 +61,7 @@ function Process (csv)
 	const bitrateMedia	= new Accumulator (1000000);
 	const bitrateRTX	= new Accumulator (1000000);
 	const bitrateProbing	= new Accumulator (1000000);
-	const data = [];
+	
 	let lost = 0;
 	let minRTT = 0;
 	let minAcumulatedDelta = 0;
@@ -120,11 +120,58 @@ function Process (csv)
 
 function DisplayData (csv)
 {
-	window.charts = {};
+	//The charts
+	const charts = window.charts = {};
 
 	//Get data
-	const data = Process (csv);
+	const data = window.data = Process (csv);
+	const preview = window.preview = [];
+	
+	for (const point of data)
+		if (!preview.length || point[Metadata.sent]-preview[preview.length-1][Metadata.sent]>1000000)
+			preview.push(point);
+	
+	//Get number of chunks
+	const linesPerChunk = 10000;
+	const chunks = data.length / linesPerChunk;
+	
+	//Create preview span
+	{
+		//Create span
+		const span = document.createElement("span");
+		//Set text
+		span.innerText = "Preview";
+		span.className = "chunk";
+		//On click
+		span.onclick = () => { 
+			for (const chart of Object.values(charts))
+				chart.data = preview;
+		};
+			
+		//Add to body
+		document.body.appendChild(span);
+	}
+		
+	for (let i=0; i<chunks; ++i)
+	{
+		//Create span
+		const span = document.createElement("span");
+		//Set text
+		span.innerText = "Chunk #" +i;
+		span.className = "chunk";
+		//On click
+		span.onclick = () => { 
+			const slice = data.slice(linesPerChunk*i,linesPerChunk*(i+1)); ;
+			for (const chart of Object.values(charts))
+				chart.data = slice;
+		};
+			
+		//Add to body
+		document.body.appendChild(span);
+	}
 
+	//am4core.options.minPolylineStep = 1.5;
+	am4core.options.queue = false;
 	//Create container for all charts
 	const container = am4core.create ("chartdiv", am4core.Container);
 	container.reverseOrder  = true;
@@ -151,14 +198,14 @@ function DisplayData (csv)
 		chart.legend.parent = chart.plotContainer;
 		chart.legend.zIndex = 100;
 		//Set chart data
-		chart.data = data;
+		chart.data = preview;
 		//Create cursor
 		chart.cursor = new am4charts.XYCursor ();
 		//Create x axis
 		const sentAxis = chart.xAxes.push (new am4charts.DateAxis ());
 		sentAxis.renderer.grid.template.location = 0;
 		sentAxis.renderer.labels.template.fill = am4core.color (colorHash.hex ("sentAxis"));
-		sentAxis.renderer.grid.template.strokeOpacity = 0.07;
+		sentAxis.renderer.grid.template.strokeOpacity = 0.01;
 		sentAxis.dateFormats.setKey("millisecond", "mm:ss.nnn");
 		sentAxis.periodChangeDateFormats.setKey("millisecond", "mm:ss.nnn");
 		sentAxis.tooltipText = "{dateX}";
@@ -240,6 +287,39 @@ function DisplayData (csv)
 				if (other != chart)
 					other.cursor.hide();
 		});
+		
+		//Create ranges for each chunk
+		for (let i=0;i<chunks;++i)
+		{
+			// axis ranges
+			var range = sentAxis.axisRanges.create();
+			range.date = data[i*linesPerChunk][Metadata.ts];
+			range.endDate = data[Math.min((i+1)*linesPerChunk,data.length)-1][Metadata.ts];
+			range.axisFill.fill = chart.colors.getIndex(i);
+			range.axisFill.fillOpacity = 0.1;
+			
+			range.label.text = "#" + i;
+			range.label.inside = true;
+			range.label.layout = "abosolute";
+			range.label.horizontalCenter = "right"
+			range.label.verticalCenter = "bottom";
+			range.label.rotation = 90;
+			range.label.y = -150;
+			range.grid.stroke = am4core.color("#396478");
+			range.grid.strokeWidth = 1;
+			range.grid.strokeOpacity = 0.5;
+
+			range.label.events.on("ready",()=>range.label.y = -150);
+			
+			range.axisFill.hoverable = true;
+			range.axisFill.events.on("hover",()=>{
+				console.log(i);
+			});
+			range.axisFill.events.on("out",()=>{
+				console.log(i);
+			});
+			
+		}
 	}
 
 	//Create BWE and bitate series and mbps axis
@@ -258,7 +338,7 @@ function DisplayData (csv)
 		function createBitrateSerie(name,field)
 		{
 			//create color
-			const color = am4core.color (colorHash.hex (name));
+			const color = am4core.color (colorHash.hex ("medooze"+name));
 			//Create serie
 			const serie = chart.series.push (new am4charts.LineSeries ());
 			serie.name = name;
@@ -325,7 +405,7 @@ function DisplayData (csv)
 		function createMSSeries(name,field)
 		{
 			//create color
-			const color = am4core.color (colorHash.hex (name));
+			const color = am4core.color (colorHash.hex ("medooze"+name));
 			//Create serie
 			const serie = chart.series.push (new am4charts.LineSeries ());
 			serie.name = name;

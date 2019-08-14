@@ -27,7 +27,18 @@
 				margin: 10px;
 
 			}
-			
+
+			.chunk {
+				border: 1px solid #ff8e6a;
+				margin: 2px;
+				padding: 2px;
+				background-color: #ffc35e;
+				cursor: pointer;
+				cursor: pointer;
+				line-height: 20px;
+				display: inline-block;
+			}
+
 		</style>
 
 	</head>
@@ -91,9 +102,9 @@
 		document.body.appendChild (table);
 	}
 
-	am4core.ready(function() {
+	am4core.ready (function () {
 		// Themes begin
-		am4core.useTheme(am4themes_dataviz);
+		am4core.useTheme (am4themes_dataviz);
 		// applying the effect for every form
 		var uploader = document.querySelector ('.uploader');
 		var chartdiv = document.querySelector ('.chartdiv');
@@ -105,7 +116,7 @@
 			//Show graph
 			chartdiv.style.display = "inherit";
 			//Show data
-			DisplayData(csv);
+			DisplayData (csv);
 		});
 	});
 </script>
