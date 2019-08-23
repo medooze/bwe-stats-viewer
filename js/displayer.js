@@ -37,13 +37,16 @@ const Metadata = {
 	deltaRecv		: 7,
 	delta			: 8,
 	bwe			: 9,
-	rtt			: 10,
-	mark			: 11,
-	rtx			: 12,
-	probing			: 13,
+	targetBitrate		: 10,
+	availableBitrate	: 11,
+	rtt			: 12,
+	mark			: 13,
+	rtx			: 14,
+	probing			: 15,
 	lost			: "lost",
 	delay			: "delay",
 	target			: "target",
+	available		: "available",
 	bitrate			: "bitrate",
 	bitrateMedia		: "bitrateMedia",
 	bitrateRTX		: "bitrateRTX",
@@ -57,10 +60,10 @@ const data = [];
 // Convert CSV file to array of data points, adding the neccesary info
 function Process (csv)
 {
-	const bitrate		= new Accumulator (1000000);
-	const bitrateMedia	= new Accumulator (1000000);
-	const bitrateRTX	= new Accumulator (1000000);
-	const bitrateProbing	= new Accumulator (1000000);
+	const bitrate		= new Accumulator (500000);
+	const bitrateMedia	= new Accumulator (500000);
+	const bitrateRTX	= new Accumulator (500000);
+	const bitrateProbing	= new Accumulator (500000);
 	
 	let lost = 0;
 	let minRTT = 0;
@@ -112,14 +115,18 @@ function Process (csv)
 		while (i<data.length && data[i][Metadata.sent]<point[Metadata.fb])
 			//Skip until the estimation is newer than the packet time
 			i++;
-		//Set target to previous estimate
-		point[Metadata.target] = i ? data[i-1][Metadata.bwe] : 0;
+		//Set target to previous target bitate
+		point[Metadata.target] = i ? data[i-1][Metadata.targetBitrate] : 0;
+		point[Metadata.available] = i ? data[i-1][Metadata.availableBitrate] : 0;
 	}
 	return data;
 }
 
-function DisplayData (csv)
+function DisplayData (name,csv)
 {
+	//Set window title
+	window.document.title = name;
+	
 	//The charts
 	const charts = window.charts = {};
 
@@ -358,6 +365,7 @@ function DisplayData (csv)
 		
 		//Create all the series
 		createBitrateSerie("BWE"	, Metadata.bwe);
+		createBitrateSerie("Available"	, Metadata.available);
 		createBitrateSerie("Target"	, Metadata.target);
 		createBitrateSerie("Total"	, Metadata.bitrate);
 		createBitrateSerie("Media"	, Metadata.bitrateMedia);

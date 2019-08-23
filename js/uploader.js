@@ -49,7 +49,7 @@ function OnFileUpload (form,callback)
 		const file = droppedFiles ? droppedFiles[0] : input.files[0];
 		
 		const fr = new FileReader ();
-		fr.onload = () => { form.classList.remove ('is-uploading'),callback(fr.result) };
+		fr.onload = () => { form.classList.remove ('is-uploading'),callback(file.name,fr.result) };
 		fr.readAsText (file);
 	});
 

@@ -59,6 +59,7 @@
 </html>
 <script src="https://www.amcharts.com/lib/4/core.js"></script>
 <script src="https://www.amcharts.com/lib/4/charts.js"></script>
+<script src="https://www.amcharts.com/lib/4/themes/material.js"></script>
 <script src="https://www.amcharts.com/lib/4/themes/dataviz.js"></script>
 <script src="js/color-hash.js"></script>
 <script src="js/uploader.js"></script>
@@ -110,13 +111,13 @@
 		var chartdiv = document.querySelector ('.chartdiv');
 		var form = document.querySelector ('.uploader .box');
 		//Listen for uploads
-		OnFileUpload (form, (csv) => {
+		OnFileUpload (form, (name,csv) => {
 			//Hide uploaded
 			uploader.style.display = "none";
 			//Show graph
 			chartdiv.style.display = "inherit";
 			//Show data
-			DisplayData (csv);
+			DisplayData (name,csv);
 		});
 	});
 </script>
