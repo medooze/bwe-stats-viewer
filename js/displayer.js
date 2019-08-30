@@ -47,7 +47,8 @@ const Metadata = {
 	delay			: "delay",
 	target			: "target",
 	available		: "available",
-	bitrate			: "bitrate",
+	bitrateSent		: "bitrateSent",
+	bitrateRecv		: "bitrateRecv",
 	bitrateMedia		: "bitrateMedia",
 	bitrateRTX		: "bitrateRTX",
 	bitrateProbing		: "bitrateProbing",
@@ -60,10 +61,11 @@ const data = [];
 // Convert CSV file to array of data points, adding the neccesary info
 function Process (csv)
 {
-	const bitrate		= new Accumulator (500000);
-	const bitrateMedia	= new Accumulator (500000);
-	const bitrateRTX	= new Accumulator (500000);
-	const bitrateProbing	= new Accumulator (500000);
+	const bitrateSent	= new Accumulator (250000);
+	const bitrateRecv	= new Accumulator (250000);
+	const bitrateMedia	= new Accumulator (250000);
+	const bitrateRTX	= new Accumulator (250000);
+	const bitrateProbing	= new Accumulator (250000);
 	
 	let lost = 0;
 	let minRTT = 0;
@@ -83,9 +85,13 @@ function Process (csv)
 			lost++;
 			//Add lost count
 			point[Metadata.lost] = lost;
+			point[Metadata.bitrateRecv] = bitrateRecv.accumulate (point[Metadata.sent], 0);
+		} else {
+			//Add recevided bitrate
+			point[Metadata.bitrateRecv] = bitrateRecv.accumulate (point[Metadata.sent], point[Metadata.size] * 8);
 		}
 		//Add sent bitrate
-		point[Metadata.bitrate]		= bitrate.accumulate (point[Metadata.sent], point[Metadata.size] * 8);
+		point[Metadata.bitrateSent]	= bitrateSent.accumulate (point[Metadata.sent], point[Metadata.size] * 8);
 		point[Metadata.bitrateMedia]	= bitrateMedia.accumulate (point[Metadata.sent], !point[Metadata.rtx] && !point[Metadata.probing] ? point[Metadata.size] * 8 : 0);
 		point[Metadata.bitrateRTX]	= bitrateRTX.accumulate (point[Metadata.sent], point[Metadata.rtx] ? point[Metadata.size] * 8 : 0);
 		point[Metadata.bitrateProbing]	= bitrateProbing.accumulate (point[Metadata.sent], point[Metadata.probing] ? point[Metadata.size] * 8 : 0);
@@ -94,7 +100,7 @@ function Process (csv)
 		//Check min/maxs
 		if (!minRTT || point[Metadata.rtt] < minRTT)
 			minRTT = point[Metadata.rtt];
-		if (!minAcumulatedDelta || acumulatedDelta < minAcumulatedDelta)
+		if (acumulatedDelta < minAcumulatedDelta)
 			minAcumulatedDelta = acumulatedDelta;
 		//Set network buffer delay
 		point[Metadata.delay] = acumulatedDelta;
@@ -364,10 +370,11 @@ function DisplayData (name,csv)
 		}
 		
 		//Create all the series
-		createBitrateSerie("BWE"	, Metadata.bwe);
-		createBitrateSerie("Available"	, Metadata.available);
+		//createBitrateSerie("BWE"	, Metadata.bwe);
+		createBitrateSerie("BWE"	, Metadata.available);
 		createBitrateSerie("Target"	, Metadata.target);
-		createBitrateSerie("Total"	, Metadata.bitrate);
+		createBitrateSerie("Total Sent"	, Metadata.bitrateSent);
+		createBitrateSerie("Total Recv"	, Metadata.bitrateRecv);
 		createBitrateSerie("Media"	, Metadata.bitrateMedia);
 		createBitrateSerie("RTX"	, Metadata.bitrateRTX);
 		createBitrateSerie("Probing"	, Metadata.bitrateProbing);
