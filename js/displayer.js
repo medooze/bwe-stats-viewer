@@ -58,14 +58,15 @@ const Metadata = {
 };
 const data = [];
 
+const MonitorDuration = 250000;
 // Convert CSV file to array of data points, adding the neccesary info
 function Process (csv)
 {
-	const bitrateSent	= new Accumulator (250000);
-	const bitrateRecv	= new Accumulator (250000);
-	const bitrateMedia	= new Accumulator (250000);
-	const bitrateRTX	= new Accumulator (250000);
-	const bitrateProbing	= new Accumulator (250000);
+	const bitrateSent	= new Accumulator (MonitorDuration);
+	const bitrateRecv	= new Accumulator (MonitorDuration);
+	const bitrateMedia	= new Accumulator (MonitorDuration);
+	const bitrateRTX	= new Accumulator (MonitorDuration);
+	const bitrateProbing	= new Accumulator (MonitorDuration);
 	
 	let lost = 0;
 	let minRTT = 0;
