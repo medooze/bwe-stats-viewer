@@ -5,7 +5,7 @@ https://medooze.github.io/bwe-stats-viewer/
 
 ## BWE stats file input
 
-The stats viewers requires a `csv` file with `\n` line ends with one entry per RTP packet containint the following information:
+The stats viewers requires '|' delimited `csv` file with `\n` line ends with one entry per RTP packet containint the following information:
 
  - 0: Feedback timestamp for rtp packet
  - 1: Transport wide seq num of rtp packet [Not currently used for stats viewer]
@@ -25,7 +25,7 @@ The stats viewers requires a `csv` file with `\n` line ends with one entry per R
  - 15: `1` if packet was for probing, `0` otherwise 
 
 Measures:
- - All timestamps and time metics are in nanoseconds (even rtt)
+ - All timestamps and time metics are in microseconds except rtt which is in milliseconds.
  - All bitrates are in `bps`
 
 ## BWE stats
