@@ -23,7 +23,11 @@ class Accumulator
 		//return average in window
 		return this.accumulated*this.factor;
 	}
-
+	
+	getAccumulated()
+	{
+		return this.accumulated;
+	}
 };
 
 const Metadata = {
@@ -62,6 +66,8 @@ const MonitorDuration = 250000;
 // Convert CSV file to array of data points, adding the neccesary info
 function Process (csv)
 {
+	const packetsSent	= new Accumulator (MonitorDuration);
+	const packetsLost	= new Accumulator (MonitorDuration);
 	const bitrateSent	= new Accumulator (MonitorDuration);
 	const bitrateRecv	= new Accumulator (MonitorDuration);
 	const bitrateMedia	= new Accumulator (MonitorDuration);
@@ -79,18 +85,23 @@ function Process (csv)
 		const line = csv.substr (ini, end - ini).trim ();
 		//Get data point
 		const point = line.split ("|").map (Number);
+		//One more packet
+		packetsSent.accumulate(point[Metadata.sent],1);
 		//Check if it was lost
 		if (point[Metadata.sent] && !point[Metadata.recv])
 		{
 			//Increse lost
-			lost++;
-			//Add lost count
-			point[Metadata.lost] = lost;
+			packetsLost.accumulate(point[Metadata.sent],1);
+			//Update received, don't increase
 			point[Metadata.bitrateRecv] = bitrateRecv.accumulate (point[Metadata.sent], 0);
 		} else {
+			//Update lost, don't increase
+			packetsLost.accumulate(point[Metadata.sent],0);
 			//Add recevided bitrate
 			point[Metadata.bitrateRecv] = bitrateRecv.accumulate (point[Metadata.sent], point[Metadata.size] * 8);
 		}
+		//Add lost count
+		point[Metadata.lost] = 100 * packetsLost.getAccumulated () / packetsSent.getAccumulated ();
 		//Add sent bitrate
 		point[Metadata.bitrateSent]	= bitrateSent.accumulate (point[Metadata.sent], point[Metadata.size] * 8);
 		point[Metadata.bitrateMedia]	= bitrateMedia.accumulate (point[Metadata.sent], !point[Metadata.rtx] && !point[Metadata.probing] ? point[Metadata.size] * 8 : 0);
@@ -348,6 +359,16 @@ function DisplayData (name,csv)
 		mbpsAxis.renderer.maxWidth = mbpsAxis.renderer.minWidth = 120;
 		mbpsAxis.renderer.grid.template.strokeOpacity = 0.07;
 		mbpsAxis.tooltip.disabled = true;
+		
+		//Duplicate axis
+		var mbpsAxisOp = chart.yAxes.push (new am4charts.ValueAxis ());
+		mbpsAxisOp.renderer.labels.template.fill = am4core.color (colorHash.hex ("mbpsAxis"));
+		mbpsAxisOp.numberFormatter = new am4core.NumberFormatter ();
+		mbpsAxisOp.numberFormatter.numberFormat = "#.###a'bps'";
+		mbpsAxisOp.renderer.maxWidth = mbpsAxisOp.renderer.minWidth = 120;
+		mbpsAxisOp.renderer.grid.template.strokeOpacity = 0.07;
+		mbpsAxisOp.tooltip.disabled = true;
+		mbpsAxisOp.renderer.opposite = true;
 
 		function createBitrateSerie(name,field)
 		{
@@ -383,26 +404,43 @@ function DisplayData (name,csv)
 
 
 	//Create lost series and axis
-//	{
-//		var lostAxis = chart.yAxes.push (new am4charts.ValueAxis ());
-//		lostAxis.renderer.labels.template.fill = am4core.color(colorHash.hex("lostSeries"));
-//		lostAxis.renderer.minWidth = 60;
-//		lostAxis.renderer.opposite = true;
-//		lostAxis.renderer.grid.template.strokeOpacity = 0.07;
-//
-//		var lostSeries = chart.series.push (new am4charts.LineSeries ());
-//		lostSeries.name = "lost";
-//		lostSeries.dataFields.dateX = Metadata.ts;
-//		lostSeries.dataFields.valueY = Metadata.lost;
-//		lostSeries.yAxis = lostAxis;
-////		lostSeries.tooltipText = "{valueY}";
-//		lostSeries.fill = am4core.color(colorHash.hex("lostSeries"));
-//		lostSeries.stroke = am4core.color(colorHash.hex("lostSeries"));
-//		//series.strokeWidth = 3;
-//
-//		//Add to scrollbar
-//		//chart.scrollbarX.series.push (lostSeries);
-//	}
+	{
+		//Get milliseconds chart
+		const chart = charts.ms;
+		//Create axis
+		var lostAxis = chart.yAxes.push (new am4charts.ValueAxis ());
+		lostAxis.renderer.labels.template.fill = am4core.color(colorHash.hex("Lost"));
+		lostAxis.numberFormatter = new am4core.NumberFormatter ();
+		lostAxis.numberFormatter.numberFormat = "#'%'";
+		lostAxis.renderer.labels.template.fill = am4core.color (colorHash.hex ("Lost"));
+		lostAxis.renderer.maxWidth = lostAxis.renderer.minWidth = 120;
+		lostAxis.renderer.opposite = true;
+		lostAxis.renderer.grid.template.strokeOpacity = 0.07;
+		lostAxis.tooltip.disabled = true;
+		lostAxis.min = lostAxis.minDefined = 0;
+		
+
+		function createPercentageSeries(name,field)
+		{
+			//create color
+			const color = am4core.color (colorHash.hex (name));
+			var serie = chart.series.push (new am4charts.LineSeries ());
+			serie.name = name;
+			serie.dataFields.dateX = Metadata.ts;
+			serie.dataFields.valueY = field;
+			serie.yAxis = lostAxis;
+			serie.tooltipText = "{name}: {valueY}%";
+			serie.fill = color;
+			serie.stroke = color;
+			serie.startLocation = 0;
+			serie.connect = false;
+			serie.autoGapCount = 100;
+			//Done
+			return serie;
+		}
+		
+		createPercentageSeries("Lost"		, Metadata.lost);
+	}
 
 	//Create milisecond axis and rtt,delay and delta series
 	{
