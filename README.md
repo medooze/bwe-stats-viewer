@@ -44,7 +44,7 @@ Provides information about the sent and reported received bitrate based on feedb
  - RTX: accumulated bitrate for `rtx` packets
  - Probing: accumulated bitrate for `probing` packets
 
-Note: All acumulated bitrates are based on the `size` stat on the input file and calculated over time window of `250ms`
+Note: All acumulated bitrates are based on the `size` stat on the input file and calculated over time window of 250ms.
 Note: All calculated bitrate grahpics are display on `sent` timestamp, for the metrics comming for the stat file, they are displayed on the feedback timestamp.
 
 ### Delay and lost chart
@@ -52,6 +52,6 @@ Note: All calculated bitrate grahpics are display on `sent` timestamp, for the m
 Provides delays information based on feedback stats
 
  - RTT: RTT in ms
- - Network delay: Accumulated value of `delta`, with a minimum at 0
+ - Network delay: Accumulated value of `delta`, with a minimum at `0`
  - Feedback delay: Delay between pacekt sent time and the time when the feedback is recevied by for that packet.
- - Lost: Not currently displayed [TODO: find good way of displaying it as accumulated value doesn't seem appropiate)
+ - Lost: % of packet loss over a 250ms window.
