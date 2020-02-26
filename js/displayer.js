@@ -78,6 +78,10 @@ function Process (csv)
 	let minRTT = 0;
 	let minAcumulatedDelta = 0;
 	let acumulatedDelta = 0;
+	let lastFeedbackNum = 0
+	let first = true;
+	let firstInInterval;
+	let count = 0;
 	//Convert each line to array
 	for (let ini = 0, end = csv.indexOf ("\n", ini); end != -1; ini = end + 1, end = csv.indexOf ("\n", ini))
 	{
@@ -107,8 +111,22 @@ function Process (csv)
 		point[Metadata.bitrateMedia]	= bitrateMedia.accumulate (point[Metadata.sent], !point[Metadata.rtx] && !point[Metadata.probing] ? point[Metadata.size] * 8 : 0);
 		point[Metadata.bitrateRTX]	= bitrateRTX.accumulate (point[Metadata.sent], point[Metadata.rtx] ? point[Metadata.size] * 8 : 0);
 		point[Metadata.bitrateProbing]	= bitrateProbing.accumulate (point[Metadata.sent], point[Metadata.probing] ? point[Metadata.size] * 8 : 0);
-		//Get accumulated delta
-		acumulatedDelta += point[Metadata.delta];
+		//If there has been a discontinuity on feedback pacekts
+		if (first || (point[Metadata.feedbackNum]!=lastFeedbackNum && ((lastFeedbackNum+1)%256)!=point[Metadata.feedbackNum]))
+		{
+			//Fix delta up to now
+			for(let i=firstInInterval; i<count; ++i)
+				//Set base delay to 0
+				data[i][Metadata.delay] = (data[i][Metadata.delay] - minAcumulatedDelta) / 1000;
+			//Reset accumulated delta
+			acumulatedDelta = 0;
+			minAcumulatedDelta = 0;
+			//This is the first of the interval
+			firstInInterval = count;
+		} else {
+			//Get accumulated delta
+			acumulatedDelta += point[Metadata.delta];
+		}
 		//Check min/maxs
 		if (!minRTT || point[Metadata.rtt] < minRTT)
 			minRTT = point[Metadata.rtt];
@@ -122,13 +140,19 @@ function Process (csv)
 		point[Metadata.fbDelay] = (point[Metadata.fb] - point[Metadata.sent])/1000;
 		//append to data
 		data.push (point);
+		//Store last feedback packet number
+		lastFeedbackNum = point[Metadata.feedbackNum];
+		first = false;
+		//Inc count
+		count ++;
 	}
-
+	//Fix delta up to now
+	for(let i=firstInInterval; i<count; ++i)
+		//Set base delay to 0
+		data[i][Metadata.delay] = (data[i][Metadata.delay] - minAcumulatedDelta) / 1000;
 	let i = 0;
 	for (const point of data)
 	{
-		//Set base delay to 0
-		point[Metadata.delay] = (point[Metadata.delay] - minAcumulatedDelta) / 1000;
 		//Find what is the estimation when this packet was sent
 		while (i<data.length && data[i][Metadata.sent]<point[Metadata.fb])
 			//Skip until the estimation is newer than the packet time
