@@ -183,40 +183,45 @@ function DisplayData (name,csv)
 	//Get number of chunks
 	const linesPerChunk = 10000;
 	const chunks = data.length / linesPerChunk;
-	
-	//Create preview span
+
+	if (chunks > 1)
 	{
-		//Create span
-		const span = document.createElement("span");
-		//Set text
-		span.innerText = "Preview";
-		span.className = "chunk";
-		//On click
-		span.onclick = () => { 
-			for (const chart of Object.values(charts))
-				chart.data = preview;
-		};
-			
-		//Add to body
-		document.body.appendChild(span);
-	}
-		
-	for (let i=0; i<chunks; ++i)
-	{
-		//Create span
-		const span = document.createElement("span");
-		//Set text
-		span.innerText = "Chunk #" +i;
-		span.className = "chunk";
-		//On click
-		span.onclick = () => { 
-			const slice = data.slice(linesPerChunk*i,linesPerChunk*(i+1)); ;
-			for (const chart of Object.values(charts))
-				chart.data = slice;
-		};
-			
-		//Add to body
-		document.body.appendChild(span);
+		//Create preview span
+		{
+			//Create span
+			const span = document.createElement("span");
+			//Set text
+			span.innerText = "Preview";
+			span.className = "chunk";
+			//On click
+			span.onclick = () =>
+			{
+				for (const chart of Object.values(charts))
+					chart.data = preview;
+			};
+
+			//Add to body
+			document.body.appendChild(span);
+		}
+
+		for (let i = 0; i < chunks; ++i)
+		{
+			//Create span
+			const span = document.createElement("span");
+			//Set text
+			span.innerText = "Chunk #" + i;
+			span.className = "chunk";
+			//On click
+			span.onclick = () =>
+			{
+				const slice = data.slice(linesPerChunk * i, linesPerChunk * (i + 1));;
+				for (const chart of Object.values(charts))
+					chart.data = slice;
+			};
+
+			//Add to body
+			document.body.appendChild(span);
+		}
 	}
 
 	//am4core.options.minPolylineStep = 1.5;
@@ -247,7 +252,7 @@ function DisplayData (name,csv)
 		chart.legend.parent = chart.plotContainer;
 		chart.legend.zIndex = 100;
 		//Set chart data
-		chart.data = preview;
+		chart.data = chunks > 1 ? preview : data;
 		//Create cursor
 		chart.cursor = new am4charts.XYCursor ();
 		//Create x axis
@@ -338,7 +343,7 @@ function DisplayData (name,csv)
 		});
 		
 		//Create ranges for each chunk
-		for (let i=0;i<chunks;++i)
+		for (let i=0;chunks>1 & i<chunks;++i)
 		{
 			// axis ranges
 			var range = sentAxis.axisRanges.create();
@@ -505,7 +510,5 @@ function DisplayData (name,csv)
 		createMSSeries("Feedback delay"	, Metadata.fbDelay);
 		
 	}
-
-
 }
 
