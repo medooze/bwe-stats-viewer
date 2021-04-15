@@ -421,7 +421,7 @@ function DisplayData (name,csv)
 		}
 		
 		//Create all the series
-		createBitrateSerie("BWE"	, Metadata.bwe);
+		createBitrateSerie("Long Term BWE", Metadata.bwe);
 		createBitrateSerie("BWE"	, Metadata.available);
 		createBitrateSerie("Target"	, Metadata.target);
 		createBitrateSerie("Total Sent"	, Metadata.bitrateSent);
