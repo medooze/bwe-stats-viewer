@@ -62,7 +62,7 @@ const Metadata = {
 };
 const data = [];
 
-const MonitorDuration = 250000;
+const MonitorDuration = 100000;
 // Convert CSV file to array of data points, adding the neccesary info
 function Process (csv)
 {
@@ -421,7 +421,7 @@ function DisplayData (name,csv)
 		}
 		
 		//Create all the series
-		//createBitrateSerie("BWE"	, Metadata.bwe);
+		createBitrateSerie("BWE"	, Metadata.bwe);
 		createBitrateSerie("BWE"	, Metadata.available);
 		createBitrateSerie("Target"	, Metadata.target);
 		createBitrateSerie("Total Sent"	, Metadata.bitrateSent);
