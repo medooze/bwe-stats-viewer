@@ -175,13 +175,14 @@
       //Listen for uploads
       OnFileUpload(form, (name, csv) =>
       {
+        //Hide uploaded
+        uploader.style.display = "none";
         //Show graph
         chartdiv.style.display = "inherit";
         //Show data
         DisplayData(name, csv);
       });
-    } else
-    {
+    } else {
       //Hide uploaded
       uploader.style.display = "none";
       //Show loading
