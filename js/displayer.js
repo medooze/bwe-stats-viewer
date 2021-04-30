@@ -52,7 +52,7 @@ const Metadata = {
 	target			: "target",
 	available		: "available",
 	bitrateSent		: "bitrateSent",
-	bitrateRecv		: "bitrateRecv",
+	bitrateRecv		: "bitrateReceived",
 	bitrateMedia		: "bitrateMedia",
 	bitrateRTX		: "bitrateRTX",
 	bitrateProbing		: "bitrateProbing",
@@ -62,7 +62,7 @@ const Metadata = {
 };
 const data = [];
 
-const MonitorDuration = 100000;
+const MonitorDuration = 200000;
 // Convert CSV file to array of data points, adding the neccesary info
 function Process (csv)
 {
@@ -421,14 +421,14 @@ function DisplayData (name,csv)
 		}
 		
 		//Create all the series
-		createBitrateSerie("Long Term BWE", Metadata.bwe);
-		createBitrateSerie("BWE"	, Metadata.available);
-		createBitrateSerie("Target"	, Metadata.target);
-		createBitrateSerie("Total Sent"	, Metadata.bitrateSent);
-		createBitrateSerie("Total Recv"	, Metadata.bitrateRecv);
-		createBitrateSerie("Media"	, Metadata.bitrateMedia);
-		createBitrateSerie("RTX"	, Metadata.bitrateRTX);
-		createBitrateSerie("Probing"	, Metadata.bitrateProbing);
+		createBitrateSerie("Long Term BWE"	, Metadata.bwe);
+		createBitrateSerie("BWE"		, Metadata.available);
+		createBitrateSerie("Target"		, Metadata.target);
+		createBitrateSerie("Total Sent"		, Metadata.bitrateSent);
+		createBitrateSerie("Total Received"	, Metadata.bitrateRecv);
+		createBitrateSerie("Media"		, Metadata.bitrateMedia);
+		createBitrateSerie("RTX"		, Metadata.bitrateRTX);
+		createBitrateSerie("Probing"		, Metadata.bitrateProbing);
 	}
 
 
