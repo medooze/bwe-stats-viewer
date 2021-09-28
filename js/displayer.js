@@ -117,7 +117,7 @@ function Process (csv)
 			//Fix delta up to now
 			for(let i=firstInInterval; i<count; ++i)
 				//Set base delay to 0
-				data[i][Metadata.delay] = (data[i][Metadata.delay] - minAcumulatedDelta) / 1000;
+				data[i][Metadata.delay] = Math.trunc((data[i][Metadata.delay] - minAcumulatedDelta) / 1000);
 			//Reset accumulated delta
 			acumulatedDelta = 0;
 			minAcumulatedDelta = 0;
