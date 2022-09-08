@@ -44,9 +44,10 @@ const Metadata = {
 	targetBitrate		: 10,
 	availableBitrate	: 11,
 	rtt			: 12,
-	mark			: 13,
-	rtx			: 14,
-	probing			: 15,
+	minrtt			: 13,
+	mark			: 14,
+	rtx			: 15,
+	probing			: 16,
 	lost			: "lost",
 	delay			: "delay",
 	target			: "target",
@@ -506,6 +507,7 @@ function DisplayData (name,csv)
 		}
 		
 		createMSSeries("RTT"		, Metadata.rtt);
+		createMSSeries("Min RTT"	, Metadata.minrtt);
 		createMSSeries("Network delay"	, Metadata.delay);
 		createMSSeries("Feedback delay"	, Metadata.fbDelay);
 		
