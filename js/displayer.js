@@ -29,6 +29,7 @@ class Accumulator
 		return this.accumulated;
 	}
 };
+const colors = ["#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7", "#000000"]
 
 const Metadata = {
 	fb			: 0,
@@ -40,14 +41,18 @@ const Metadata = {
 	deltaSent		: 6,
 	deltaRecv		: 7,
 	delta			: 8,
-	bwe			: 9,
-	targetBitrate		: 10,
-	availableBitrate	: 11,
-	rtt			: 12,
-	minrtt			: 13,
-	mark			: 14,
-	rtx			: 15,
-	probing			: 16,
+	deltaAcumulated		: 9,
+	deltaInstant		: 10,
+	bwe			: 11,
+	targetBitrate		: 12,
+	availableBitrate	: 13,
+	rtt			: 14,
+	minrtt			: 15,
+	estimatedrtt		: 16,
+	mark			: 17,
+	rtx			: 18,
+	probing			: 19,
+	state			: 20,
 	lost			: "lost",
 	delay			: "delay",
 	target			: "target",
@@ -246,6 +251,7 @@ function DisplayData (name,csv)
 		const chart = container.createChild (am4charts.XYChart);
 		//Set padding
 		chart.padding (10, 15, 10, 15);
+		chart.margin (10, 15, 10, 15);
 		//Use utc time
 		chart.dateFormatter.utc = true;
 		//Create legend
@@ -390,20 +396,11 @@ function DisplayData (name,csv)
 		mbpsAxis.renderer.grid.template.strokeOpacity = 0.07;
 		mbpsAxis.tooltip.disabled = true;
 		
-		//Duplicate axis
-		var mbpsAxisOp = chart.yAxes.push (new am4charts.ValueAxis ());
-		mbpsAxisOp.renderer.labels.template.fill = am4core.color (colorHash.hex ("mbpsAxis"));
-		mbpsAxisOp.numberFormatter = new am4core.NumberFormatter ();
-		mbpsAxisOp.numberFormatter.numberFormat = "#.###a'bps'";
-		mbpsAxisOp.renderer.maxWidth = mbpsAxisOp.renderer.minWidth = 120;
-		mbpsAxisOp.renderer.grid.template.strokeOpacity = 0.07;
-		mbpsAxisOp.tooltip.disabled = true;
-		mbpsAxisOp.renderer.opposite = true;
 
-		function createBitrateSerie(name,field)
+		function createBitrateSerie(name,field,colorValue)
 		{
 			//create color
-			const color = am4core.color (colorHash.hex ("medooze"+name));
+			const color = am4core.color(colorValue || colorHash.hex ("medooze"+name));
 			//Create serie
 			const serie = chart.series.push (new am4charts.LineSeries ());
 			serie.name = name;
@@ -421,17 +418,57 @@ function DisplayData (name,csv)
 			return serie;
 		}
 		
+		let i = 0;
 		//Create all the series
-		createBitrateSerie("Long Term BWE"	, Metadata.bwe);
-		createBitrateSerie("BWE"		, Metadata.available);
-		createBitrateSerie("Target"		, Metadata.target);
-		createBitrateSerie("Total Sent"		, Metadata.bitrateSent);
-		createBitrateSerie("Total Received"	, Metadata.bitrateRecv);
-		createBitrateSerie("Media"		, Metadata.bitrateMedia);
-		createBitrateSerie("RTX"		, Metadata.bitrateRTX);
-		createBitrateSerie("Probing"		, Metadata.bitrateProbing);
+		createBitrateSerie("Long Term BWE"	, Metadata.bwe			, colors[i++]);
+		createBitrateSerie("BWE"		, Metadata.available		, colors[i++]);
+		createBitrateSerie("Target"		, Metadata.target		, colors[i++]);
+		createBitrateSerie("Total Sent"		, Metadata.bitrateSent		, colors[i++]);
+		createBitrateSerie("Total Received"	, Metadata.bitrateRecv		, colors[i++]);
+		createBitrateSerie("Media"		, Metadata.bitrateMedia		, colors[i++]);
+		createBitrateSerie("RTX"		, Metadata.bitrateRTX		, colors[i++]);
+		createBitrateSerie("Probing"		, Metadata.bitrateProbing	, colors[i++]);
 	}
 
+	//Create state series an axis
+	{
+		//Get milliseconds chart
+		const chart = charts.mbps;
+		//Create axis
+		var stateAxis = chart.yAxes.push (new am4charts.ValueAxis());
+		stateAxis.renderer.labels.template.fill = am4core.color(colorHash.hex("State"));
+		stateAxis.numberFormatter = new am4core.NumberFormatter ();
+		stateAxis.numberFormatter.numberFormat = "#'%'";;
+		stateAxis.renderer.labels.template.fill = am4core.color (colorHash.hex ("state"));
+		stateAxis.renderer.maxWidth = stateAxis.renderer.minWidth = 120;
+		stateAxis.renderer.opposite = true;
+		stateAxis.renderer.grid.template.strokeOpacity = 0.07;
+		stateAxis.tooltip.disabled = true;
+		stateAxis.min = stateAxis.minDefined = 0;
+		stateAxis.max = stateAxis.maxDefined = 6;
+
+		function createStateSeries(name,field,colorValue)
+		{
+			//create color
+			const color = am4core.color(colorValue || colorHash.hex ("medooze"+name));
+			//Create serie
+			var serie = chart.series.push (new am4charts.LineSeries ());
+			serie.name = name;
+			serie.dataFields.dateX = Metadata.ts;
+			serie.dataFields.valueY = field;
+			serie.yAxis = stateAxis;
+			serie.tooltipText = "{name}: {valueY}";
+			serie.fill = color;
+			serie.stroke = color;
+			serie.startLocation = 0;
+			serie.connect = false;
+			serie.autoGapCount = 100;
+			//Done
+			return serie;
+		}
+		
+		createStateSeries("state"		, Metadata.state, "#FF0000");
+	}
 
 	//Create lost series and axis
 	{
@@ -450,10 +487,11 @@ function DisplayData (name,csv)
 		lostAxis.min = lostAxis.minDefined = 0;
 		
 
-		function createPercentageSeries(name,field)
+		function createPercentageSeries(name,field,colorValue)
 		{
 			//create color
-			const color = am4core.color (colorHash.hex (name));
+			const color = am4core.color(colorValue || colorHash.hex ("medooze"+name));
+			//Create serie
 			var serie = chart.series.push (new am4charts.LineSeries ());
 			serie.name = name;
 			serie.dataFields.dateX = Metadata.ts;
@@ -469,7 +507,7 @@ function DisplayData (name,csv)
 			return serie;
 		}
 		
-		createPercentageSeries("Lost"		, Metadata.lost);
+		createPercentageSeries("Lost"		, Metadata.lost, "#FF0000");
 	}
 
 	//Create milisecond axis and rtt,delay and delta series
@@ -486,10 +524,10 @@ function DisplayData (name,csv)
 		msAxis.renderer.grid.template.strokeOpacity = 0.07;
 		msAxis.tooltip.disabled = true;
 
-		function createMSSeries(name,field)
+		function createMSSeries(name,field,colorValue)
 		{
 			//create color
-			const color = am4core.color (colorHash.hex ("medooze"+name));
+			const color = am4core.color(colorValue || colorHash.hex ("medooze"+name));
 			//Create serie
 			const serie = chart.series.push (new am4charts.LineSeries ());
 			serie.name = name;
@@ -506,10 +544,14 @@ function DisplayData (name,csv)
 			return serie;
 		}
 		
-		createMSSeries("RTT"		, Metadata.rtt);
-		createMSSeries("Min RTT"	, Metadata.minrtt);
-		createMSSeries("Network delay"	, Metadata.delay);
-		createMSSeries("Feedback delay"	, Metadata.fbDelay);
+		let i = 0;
+		createMSSeries("RTT"		, Metadata.rtt			, colors[i++]);
+		createMSSeries("Min RTT"	, Metadata.minrtt		, colors[i++]);
+		createMSSeries("Estimated RTT"	, Metadata.estimatedrtt		, colors[i++]);
+		createMSSeries("Network delay"	, Metadata.delay		, colors[i++]);
+		createMSSeries("Feedback delay"	, Metadata.fbDelay		, colors[i++]);
+		createMSSeries("Delta acumulated", Metadata.deltaAcumulated	, colors[i++]);
+		createMSSeries("Detla instant"	, Metadata.deltaInstant		, colors[i++]);
 		
 	}
 }
