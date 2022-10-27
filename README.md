@@ -16,13 +16,18 @@ The stats viewers requires `|` delimited `csv` file with `\n` line ends with one
  - 6: Delta time with previous sent rtp packet (`0` if lost) [Not currently used for stats viewer]
  - 7: Delta time with previous received timestamp (`0` if lost) [Not currently used for stats viewer]
  - 8: Delta sent time - delta received time
- - 9: Raw Estimated bitrate [Not currently used for stats viewer]
- - 10: Target bitrate for probing
- - 11: Available bitrate, adjusted bwe estimation reported back to the app (BWE minus RTX allocation based on packet loss)
- - 12: rtt 
- - 13: mark flag of RTP packet [Not currently used for stats viewer]
- - 14: `1` if packet was a retransmission, `0` otherwise
- - 15: `1` if packet was for probing, `0` otherwise 
+ - 9: Delta accumulated time
+ - 10: Delta instant 
+ - 11: Raw Estimated bitrate [Not currently used for stats viewer]
+ - 12: Target bitrate for probing
+ - 13: Available bitrate, adjusted bwe estimation reported back to the app (BWE minus RTX allocation based on packet loss)
+ - 14: Reported rtt 
+ - 15: Minimum rtt
+ - 16: Estimated rtt
+ - 17: mark flag of RTP packet [Not currently used for stats viewer]
+ - 18: `1` if packet was a retransmission, `0` otherwise
+ - 19: `1` if packet was for probing, `0` otherwise 
+ - 20: BWE alogorithm state
 
 Measures:
  - All timestamps and time metics are in microseconds except rtt which is in milliseconds.
