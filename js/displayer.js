@@ -103,12 +103,12 @@ function Process (csv)
 			//Increse lost
 			packetsLost.accumulate(point[Metadata.sent],1);
 			//Update received, don't increase
-			point[Metadata.bitrateRecv] = bitrateRecv.accumulate (point[Metadata.sent], 0);
+			point[Metadata.bitrateRecv] = bitrateRecv.accumulate (point[Metadata.recv], 0);
 		} else {
 			//Update lost, don't increase
 			packetsLost.accumulate(point[Metadata.sent],0);
 			//Add recevided bitrate
-			point[Metadata.bitrateRecv] = bitrateRecv.accumulate (point[Metadata.sent], point[Metadata.size] * 8);
+			point[Metadata.bitrateRecv] = bitrateRecv.accumulate (point[Metadata.recv], point[Metadata.size] * 8);
 		}
 		//Add lost count
 		point[Metadata.lost] = 100 * packetsLost.getAccumulated () / packetsSent.getAccumulated ();
