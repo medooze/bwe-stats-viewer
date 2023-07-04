@@ -7,8 +7,8 @@
  * @returns {Number}
  */
 var BKDRHash = function(str) {
-    var seed = 131;
-    var seed2 = 138;
+    var seed = 12;
+    var seed2 = 24;
     var hash = 0;
     // make hash more sensitive for short string like 'a', 'b', 'c'
     str += 'x';
