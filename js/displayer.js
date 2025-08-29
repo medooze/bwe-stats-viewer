@@ -43,7 +43,7 @@ const Metadata = {
 	delta			: 8,
 	deltaAcumulated		: 9,
 	deltaInstant		: 10,
-	bwe			: 11,
+	estimated			: 11,
 	targetBitrate		: 12,
 	availableBitrate	: 13,
 	rtt			: 14,
@@ -489,8 +489,8 @@ function DisplayData (name,csv)
 		
 		let i = 0;
 		//Create all the series
-		createBitrateSerie("Long Term BWE"	, Metadata.bwe			, colors[i++]);
-		createBitrateSerie("BWE"		, Metadata.available		, colors[i++]);
+		createBitrateSerie("Estimated"	, Metadata.estimated			, colors[i++]);
+		createBitrateSerie("Available"	, Metadata.available		, colors[i++]);
 		createBitrateSerie("Target"		, Metadata.target		, colors[i++]);
 		createBitrateSerie("Total Sent"		, Metadata.bitrateSent		, colors[i++]);
 		createBitrateSerie("Total Received"	, Metadata.bitrateRecv		, colors[i++]);
@@ -521,12 +521,12 @@ function DisplayData (name,csv)
 			if (target.dataItem)
 			{
 				const v = target.dataItem.values.value.value;
-				if (v === 0) return '[black] Initial';
-				else if (v === 1) return '[green] Increase';
-				else if (v === 2) return '[blue] OverShoot';
-				else if (v === 3) return '[orange] Congestion';
-				else if (v === 4) return '[black] Recovery';
-				else if (v === 5) return '[red] Loosy';
+				if (v === 0) return '[black] Initial(0)';
+				else if (v === 1) return '[green] Increase(1)';
+				else if (v === 2) return '[blue] OverShoot(2)';
+				else if (v === 3) return '[orange] Congestion(3)';
+				else if (v === 4) return '[black] Recovery(4)';
+				else if (v === 5) return '[red] Loosy(5)';
 			}
 			return label;
 		});
