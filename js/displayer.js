@@ -29,7 +29,7 @@ class Accumulator
 		return this.accumulated;
 	}
 };
-const colors = ["#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7", "#000000", "#CC00FF"]
+const colors = ["#E69F00", "#56B4E9", "#009E73", "#65118fff", "#0072B2", "#D55E00", "#CC79A7", "#000000", "#CC00FF"]
 
 const Metadata = {
 	fb			: 0,
@@ -515,6 +515,22 @@ function DisplayData (name,csv)
 		stateAxis.tooltip.disabled = true;
 		stateAxis.min = stateAxis.minDefined = 0;
 		stateAxis.max = stateAxis.maxDefined = 6;
+
+		// ideally we will also change the tooltip text but not sure yet how to do this mapping as some kind of custom function instead of using tooltipText
+		stateAxis.renderer.labels.template.adapter.add("text", (label, target, key) => {
+			if (target.dataItem)
+			{
+				const v = target.dataItem.values.value.value;
+				if (v === 0) return '[black] Initial';
+				else if (v === 1) return '[green] Increase';
+				else if (v === 2) return '[blue] OverShoot';
+				else if (v === 3) return '[orange] Congestion';
+				else if (v === 4) return '[black] Recovery';
+				else if (v === 5) return '[red] Loosy';
+			}
+			return label;
+		});
+
 
 		function createStateSeries(name,field,colorValue)
 		{
