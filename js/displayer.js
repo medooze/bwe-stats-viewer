@@ -321,6 +321,16 @@ function DisplayData (name,csv)
 		//Set padding
 		chart.padding (10, 15, 10, 15);
 		chart.margin (10, 15, 10, 15);
+
+		if (id == "layers")
+		{
+			chart.height = am4core.percent (20);
+		}
+		else
+		{
+			chart.height = am4core.percent (40);
+		}
+
 		//Use utc time
 		chart.dateFormatter.utc = true;
 		//Create legend
