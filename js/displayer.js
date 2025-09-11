@@ -61,6 +61,7 @@ const Metadata = {
 	switchedFromSmooth: 26,
 	time: 27,
 	isLayerEvent: 28,
+	csvDataItems: 29,
 	lost			: "lost",
 	delay			: "delay",
 	target			: "target",
@@ -73,7 +74,8 @@ const Metadata = {
 	ts			: "ts",
 	fbDelay			: "fbDelay",
 	trackNumber     : "trackNumber",
-	encodingNumber     : "encodingNumber"
+	encodingNumber     : "encodingNumber",
+	smoothTransition     : "smoothTransition"
 };
 const data = [];
 
@@ -104,6 +106,7 @@ function Process (csv)
 	let layerMaxTargetBitrate = new Map();
 	let lastPoint = null;
 
+	console.log(`Processing csv file`);
 	//Convert each line to array
 	for (let ini = 0, end = csv.indexOf ("\n", ini); end != -1; ini = end + 1, end = csv.indexOf ("\n", ini))
 	{
@@ -111,6 +114,11 @@ function Process (csv)
 		const line = csv.substr (ini, end - ini).trim ();
 		//Get data point
 		const point = line.split ("|").map (v => isNaN(Number(v)) ? v : Number(v));
+
+		// Lets extend the point vector to the new length filling in 0s for things that are missing
+		const originalLength = point.length;
+		point.length = Metadata.csvDataItems;
+		point.fill(undefined, originalLength);
 
 		// Only want to update accumulators if this is NOT a layer event
 		if (!point[Metadata.isLayerEvent])
@@ -160,9 +168,17 @@ function Process (csv)
 				minAcumulatedDelta = acumulatedDelta;
 			//Set network buffer delay
 			point[Metadata.delay] = acumulatedDelta;
-			//Set sent time as Date
-			//point[Metadata.ts] = new Date(point[Metadata.sent] / 1000);
-			point[Metadata.ts]             = new Date((point[Metadata.time] / 1000));
+			
+			// Old version used sent time, new version has a field for the time
+			if (point[Metadata.time] === undefined)
+			{
+				point[Metadata.ts] = new Date(point[Metadata.sent] / 1000);
+			}
+			else
+			{
+				point[Metadata.ts]             = new Date((point[Metadata.time] / 1000));
+			}
+
 			//Set the delay of the feedback
 			point[Metadata.fbDelay] = (point[Metadata.fb] - point[Metadata.sent])/1000;
 
@@ -241,6 +257,7 @@ function Process (csv)
 		{
 			point[Metadata.trackNumber] = trackNumberMap.get(point[Metadata.trackId]);
 			point[Metadata.encodingNumber] = encodingNumberMap.get(point[Metadata.encodingId]);
+			point[Metadata.smoothTransition] = point[Metadata.switchedFromSmooth] ? "smooth" : "paused";
 		}
 	}
 
@@ -720,7 +737,9 @@ function DisplayData (name,csv)
 			}
 			
 			createBpsSeries("layerBitrate", Metadata.layerBitrate, colors[i++]);
-			createBpsSeries("layerTargetBitrate", Metadata.layerTargetBitrate, colors[i++]);	
+			createBpsSeries("layerTargetBitrate", Metadata.layerTargetBitrate, colors[i++]);
+			createBpsSeries("encodingGuessBitrate", Metadata.encodingBestGuessBitrate, colors[i++]);
+			
 		}
 
 		//Create track/layer names series and axis
@@ -763,6 +782,7 @@ function DisplayData (name,csv)
 			
 			createLayersSeries("trackId"		, Metadata.trackNumber, colors[i++], Metadata.trackId);
 			createLayersSeries("encodingId"		, Metadata.encodingNumber, colors[i++],  Metadata.encodingId);
+			createLayersSeries("smoothTransition"		, Metadata.switchedFromSmooth, colors[i++],  Metadata.smoothTransition);
 		}
 
 	}
