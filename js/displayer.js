@@ -42,7 +42,7 @@ const Metadata = {
 	deltaRecv		: 7,
 	delta			: 8,
 	deltaAcumulated		: 9,
-	deltaInstant		: 10,
+	deltaInstant		: 10, // accumulatedDeltaMin (TODO C++ different name)
 	estimated			: 11,
 	targetBitrate		: 12,
 	availableBitrate	: 13,
@@ -55,8 +55,12 @@ const Metadata = {
 	state			: 20,
 	trackId			: 21,
 	encodingId		: 22,
-	layerBitrate	: 23,
+	layerBitrate	: 23, // encodingBitrate (TODO C++ different name)
 	layerTargetBitrate	: 24,
+	encodingBestGuessBitrate: 25,
+	switchedFromSmooth: 26,
+	time: 27,
+	isLayerEvent: 28,
 	lost			: "lost",
 	delay			: "delay",
 	target			: "target",
@@ -98,6 +102,7 @@ function Process (csv)
 	let layerNames = new Set();
 
 	let layerMaxTargetBitrate = new Map();
+	let lastPoint = null;
 
 	//Convert each line to array
 	for (let ini = 0, end = csv.indexOf ("\n", ini); end != -1; ini = end + 1, end = csv.indexOf ("\n", ini))
@@ -106,55 +111,84 @@ function Process (csv)
 		const line = csv.substr (ini, end - ini).trim ();
 		//Get data point
 		const point = line.split ("|").map (v => isNaN(Number(v)) ? v : Number(v));
-		//One more packet
-		packetsSent.accumulate(point[Metadata.sent],1);
-		//Check if it was lost
-		if (point[Metadata.sent] && !point[Metadata.recv])
+
+		// Only want to update accumulators if this is NOT a layer event
+		if (!point[Metadata.isLayerEvent])
 		{
-			//Increse lost
-			packetsLost.accumulate(point[Metadata.sent],1);
-			//Update received, don't increase
-			point[Metadata.bitrateRecv] = bitrateRecv.accumulate (point[Metadata.recv], 0);
-		} else {
-			//Update lost, don't increase
-			packetsLost.accumulate(point[Metadata.sent],0);
-			//Add recevided bitrate
-			point[Metadata.bitrateRecv] = bitrateRecv.accumulate (point[Metadata.recv], point[Metadata.size] * 8);
+			//One more packet
+			packetsSent.accumulate(point[Metadata.sent],1);
+			//Check if it was lost
+			if (point[Metadata.sent] && !point[Metadata.recv])
+			{
+				//Increse lost
+				packetsLost.accumulate(point[Metadata.sent],1);
+				//Update received, don't increase
+				point[Metadata.bitrateRecv] = bitrateRecv.accumulate (point[Metadata.recv], 0);
+			} else {
+				//Update lost, don't increase
+				packetsLost.accumulate(point[Metadata.sent],0);
+				//Add recevided bitrate
+				point[Metadata.bitrateRecv] = bitrateRecv.accumulate (point[Metadata.recv], point[Metadata.size] * 8);
+			}
+			//Add lost count
+			point[Metadata.lost] = 100 * packetsLost.getAccumulated () / packetsSent.getAccumulated ();
+			//Add sent bitrate
+			point[Metadata.bitrateSent]	= bitrateSent.accumulate (point[Metadata.sent], point[Metadata.size] * 8);
+			point[Metadata.bitrateMedia]	= bitrateMedia.accumulate (point[Metadata.sent], !point[Metadata.rtx] && !point[Metadata.probing] ? point[Metadata.size] * 8 : 0);
+			point[Metadata.bitrateRTX]	= bitrateRTX.accumulate (point[Metadata.sent], point[Metadata.rtx] ? point[Metadata.size] * 8 : 0);
+			point[Metadata.bitrateProbing]	= bitrateProbing.accumulate (point[Metadata.sent], point[Metadata.probing] ? point[Metadata.size] * 8 : 0);
+			//If there has been a discontinuity on feedback pacekts
+			if (first || (point[Metadata.feedbackNum]!=lastFeedbackNum && ((lastFeedbackNum+1)%256)!=point[Metadata.feedbackNum]))
+			{
+				//Fix delta up to now
+				for(let i=firstInInterval; i<count; ++i)
+					//Set base delay to 0
+					data[i][Metadata.delay] = Math.trunc((data[i][Metadata.delay] - minAcumulatedDelta) / 1000);
+				//Reset accumulated delta
+				acumulatedDelta = 0;
+				minAcumulatedDelta = 0;
+				//This is the first of the interval
+				firstInInterval = count;
+			} else {
+				//Get accumulated delta
+				acumulatedDelta += point[Metadata.delta];
+			}
+			//Check min/maxs
+			if (!minRTT || point[Metadata.rtt] < minRTT)
+				minRTT = point[Metadata.rtt];
+			if (acumulatedDelta < minAcumulatedDelta)
+				minAcumulatedDelta = acumulatedDelta;
+			//Set network buffer delay
+			point[Metadata.delay] = acumulatedDelta;
+			//Set sent time as Date
+			//point[Metadata.ts] = new Date(point[Metadata.sent] / 1000);
+			point[Metadata.ts]             = new Date((point[Metadata.time] / 1000));
+			//Set the delay of the feedback
+			point[Metadata.fbDelay] = (point[Metadata.fb] - point[Metadata.sent])/1000;
+
+			// Rather than confuse people lets hide this when it doesnt change
+			//point[Metadata.layerBitrate] = 0;
+			// tried delet/null/undefined and only ever showed the first item on the graph
+
+			//Store last feedback packet number
+			lastFeedbackNum = point[Metadata.feedbackNum];
+			first = false;
 		}
-		//Add lost count
-		point[Metadata.lost] = 100 * packetsLost.getAccumulated () / packetsSent.getAccumulated ();
-		//Add sent bitrate
-		point[Metadata.bitrateSent]	= bitrateSent.accumulate (point[Metadata.sent], point[Metadata.size] * 8);
-		point[Metadata.bitrateMedia]	= bitrateMedia.accumulate (point[Metadata.sent], !point[Metadata.rtx] && !point[Metadata.probing] ? point[Metadata.size] * 8 : 0);
-		point[Metadata.bitrateRTX]	= bitrateRTX.accumulate (point[Metadata.sent], point[Metadata.rtx] ? point[Metadata.size] * 8 : 0);
-		point[Metadata.bitrateProbing]	= bitrateProbing.accumulate (point[Metadata.sent], point[Metadata.probing] ? point[Metadata.size] * 8 : 0);
-		//If there has been a discontinuity on feedback pacekts
-		if (first || (point[Metadata.feedbackNum]!=lastFeedbackNum && ((lastFeedbackNum+1)%256)!=point[Metadata.feedbackNum]))
+		else
 		{
-			//Fix delta up to now
-			for(let i=firstInInterval; i<count; ++i)
-				//Set base delay to 0
-				data[i][Metadata.delay] = Math.trunc((data[i][Metadata.delay] - minAcumulatedDelta) / 1000);
-			//Reset accumulated delta
-			acumulatedDelta = 0;
-			minAcumulatedDelta = 0;
-			//This is the first of the interval
-			firstInInterval = count;
-		} else {
-			//Get accumulated delta
-			acumulatedDelta += point[Metadata.delta];
+			// In this case all we care about is the layer change data, we will duplicate all the other data from previous point
+			point[Metadata.bitrateRecv]    = lastPoint !== null ? lastPoint[Metadata.bitrateRecv] : 0;
+			point[Metadata.lost]           = lastPoint !== null ? lastPoint[Metadata.lost] : 0;
+			point[Metadata.bitrateSent]    = lastPoint !== null ? lastPoint[Metadata.bitrateSent] : 0;
+			point[Metadata.bitrateMedia]   = lastPoint !== null ? lastPoint[Metadata.bitrateMedia] : 0;
+			point[Metadata.bitrateRTX]     = lastPoint !== null ? lastPoint[Metadata.bitrateRTX] : 0;
+			point[Metadata.bitrateProbing] = lastPoint !== null ? lastPoint[Metadata.bitrateProbing] : 0;
+			point[Metadata.delay]          = lastPoint !== null ? lastPoint[Metadata.delay] : 0;
+			point[Metadata.ts]             = new Date((point[Metadata.time] / 1000));
+			point[Metadata.fbDelay]        = lastPoint !== null ? lastPoint[Metadata.fbDelay] : 0;
 		}
-		//Check min/maxs
-		if (!minRTT || point[Metadata.rtt] < minRTT)
-			minRTT = point[Metadata.rtt];
-		if (acumulatedDelta < minAcumulatedDelta)
-			minAcumulatedDelta = acumulatedDelta;
-		//Set network buffer delay
-		point[Metadata.delay] = acumulatedDelta;
-		//Set sent time as Date
-		point[Metadata.ts] = new Date(point[Metadata.sent] / 1000);
-		//Set the delay of the feedback
-		point[Metadata.fbDelay] = (point[Metadata.fb] - point[Metadata.sent])/1000;
+
+		lastPoint = point;
 		//append to data
 		data.push (point);
 
@@ -174,9 +208,6 @@ function Process (csv)
 			layerMaxTargetBitrate.set(encodingId, currentMaxBitrate ? Math.max(currentMaxBitrate, layerTargetBitrate) : layerTargetBitrate);
 		}
 
-		//Store last feedback packet number
-		lastFeedbackNum = point[Metadata.feedbackNum];
-		first = false;
 		//Inc count
 		count ++;
 	}
