@@ -40,7 +40,8 @@ const MetadataEventType = {
 	FEEDBACK: 0,
 	LAYER: 1,
 	BLOCKED_FEEDBACK: 2,
-	NONTWCC: 3
+	NONTWCC: 3,
+	FLUSH: 4,
 };
 
 const Metadata = {
@@ -171,7 +172,7 @@ function Process (csv)
 	for (const point of unsorted)
 	{
 		// Only want to update accumulators if this is NOT a layer event
-		if (point[Metadata.eventType] === MetadataEventType.FEEDBACK)
+		if (point[Metadata.eventType] === MetadataEventType.FEEDBACK || point[Metadata.eventType] === MetadataEventType.FLUSH)
 		{
 			packetsSent.accumulate(point[Metadata.sent],1);
 
@@ -352,7 +353,7 @@ function Process (csv)
 	let i = 0;
 	for (const point of data)
 	{
-		if (point[Metadata.eventType] !== MetadataEventType.FEEDBACK)
+		if (point[Metadata.eventType] !== MetadataEventType.FEEDBACK && point[Metadata.eventType] !== MetadataEventType.FLUSH)
 		{
 			lastLayerEvent = i;
 
