@@ -18,8 +18,13 @@ class Accumulator
 			this.accumulated -= this.points.shift ().val;
 		//Accumulate
 		this.accumulated += val;
+
+		// Note: The above shifting accumulator requires that the data be in order to work properly
+
 		//Push new point
 		this.points.push ({time, val});
+
+		//this.add({time, val})
 		//return average in window
 		return this.accumulated*this.factor;
 	}
@@ -30,6 +35,13 @@ class Accumulator
 	}
 };
 const colors = ["#E69F00", "#56B4E9", "#009E73", "#65118fff", "#0072B2", "#D55E00", "#CC79A7", "#000000", "#CC00FF"]
+
+const MetadataEventType = {
+	FEEDBACK: 0,
+	LAYER: 1,
+	BLOCKED_FEEDBACK: 2,
+	NONTWCC: 3
+};
 
 const Metadata = {
 	fb			: 0,
@@ -60,22 +72,30 @@ const Metadata = {
 	encodingBestGuessBitrate: 25,
 	switchedFromSmooth: 26,
 	time: 27,
-	isLayerEvent: 28,
+	eventType: 28,
 	csvDataItems: 29,
+
 	lost			: "lost",
 	delay			: "delay",
 	target			: "target",
 	available		: "available",
+
 	bitrateSent		: "bitrateSent",
+	bitrateSentLong		: "bitrateSentLong",
 	bitrateRecv		: "bitrateReceived",
+	bitrateRecvLong		: "bitrateReceivedLong",
 	bitrateMedia		: "bitrateMedia",
 	bitrateRTX		: "bitrateRTX",
 	bitrateProbing		: "bitrateProbing",
+	bitrateNonTWCC		: "bitrateNonTWCC",
 	ts			: "ts",
 	fbDelay			: "fbDelay",
 	trackNumber     : "trackNumber",
 	encodingNumber     : "encodingNumber",
-	smoothTransition     : "smoothTransition"
+	smoothTransition     : "smoothTransition",
+	seqPoint     : "seqPoint",
+	layerAvailable: "layerAvailable",
+
 };
 const data = [];
 
@@ -86,10 +106,13 @@ function Process (csv)
 	const packetsSent	= new Accumulator (MonitorDuration);
 	const packetsLost	= new Accumulator (MonitorDuration);
 	const bitrateSent	= new Accumulator (MonitorDuration);
+	const bitrateSentLong	= new Accumulator (5000000);
 	const bitrateRecv	= new Accumulator (MonitorDuration);
+	const bitrateRecvLong	= new Accumulator (5000000);
 	const bitrateMedia	= new Accumulator (MonitorDuration);
 	const bitrateRTX	= new Accumulator (MonitorDuration);
 	const bitrateProbing	= new Accumulator (MonitorDuration);
+	const bitrateNonTWCC	= new Accumulator (MonitorDuration);
 	
 	let lost = 0;
 	let minRTT = 0;
@@ -107,7 +130,9 @@ function Process (csv)
 	let lastPoint = null;
 
 	console.log(`Processing csv file`);
+
 	//Convert each line to array
+	const unsorted = [];
 	for (let ini = 0, end = csv.indexOf ("\n", ini); end != -1; ini = end + 1, end = csv.indexOf ("\n", ini))
 	{
 		//get line
@@ -120,55 +145,8 @@ function Process (csv)
 		point.length = Metadata.csvDataItems;
 		point.fill(undefined, originalLength);
 
-		// Only want to update accumulators if this is NOT a layer event
-		if (!point[Metadata.isLayerEvent])
+		if (point[Metadata.eventType] === MetadataEventType.FEEDBACK)
 		{
-			//One more packet
-			packetsSent.accumulate(point[Metadata.sent],1);
-			//Check if it was lost
-			if (point[Metadata.sent] && !point[Metadata.recv])
-			{
-				//Increse lost
-				packetsLost.accumulate(point[Metadata.sent],1);
-				//Update received, don't increase
-				point[Metadata.bitrateRecv] = bitrateRecv.accumulate (point[Metadata.recv], 0);
-			} else {
-				//Update lost, don't increase
-				packetsLost.accumulate(point[Metadata.sent],0);
-				//Add recevided bitrate
-				point[Metadata.bitrateRecv] = bitrateRecv.accumulate (point[Metadata.recv], point[Metadata.size] * 8);
-			}
-			//Add lost count
-			point[Metadata.lost] = 100 * packetsLost.getAccumulated () / packetsSent.getAccumulated ();
-			//Add sent bitrate
-			point[Metadata.bitrateSent]	= bitrateSent.accumulate (point[Metadata.sent], point[Metadata.size] * 8);
-			point[Metadata.bitrateMedia]	= bitrateMedia.accumulate (point[Metadata.sent], !point[Metadata.rtx] && !point[Metadata.probing] ? point[Metadata.size] * 8 : 0);
-			point[Metadata.bitrateRTX]	= bitrateRTX.accumulate (point[Metadata.sent], point[Metadata.rtx] ? point[Metadata.size] * 8 : 0);
-			point[Metadata.bitrateProbing]	= bitrateProbing.accumulate (point[Metadata.sent], point[Metadata.probing] ? point[Metadata.size] * 8 : 0);
-			//If there has been a discontinuity on feedback pacekts
-			if (first || (point[Metadata.feedbackNum]!=lastFeedbackNum && ((lastFeedbackNum+1)%256)!=point[Metadata.feedbackNum]))
-			{
-				//Fix delta up to now
-				for(let i=firstInInterval; i<count; ++i)
-					//Set base delay to 0
-					data[i][Metadata.delay] = Math.trunc((data[i][Metadata.delay] - minAcumulatedDelta) / 1000);
-				//Reset accumulated delta
-				acumulatedDelta = 0;
-				minAcumulatedDelta = 0;
-				//This is the first of the interval
-				firstInInterval = count;
-			} else {
-				//Get accumulated delta
-				acumulatedDelta += point[Metadata.delta];
-			}
-			//Check min/maxs
-			if (!minRTT || point[Metadata.rtt] < minRTT)
-				minRTT = point[Metadata.rtt];
-			if (acumulatedDelta < minAcumulatedDelta)
-				minAcumulatedDelta = acumulatedDelta;
-			//Set network buffer delay
-			point[Metadata.delay] = acumulatedDelta;
-			
 			// Old version used sent time, new version has a field for the time
 			if (point[Metadata.time] === undefined)
 			{
@@ -178,55 +156,155 @@ function Process (csv)
 			{
 				point[Metadata.ts]             = new Date((point[Metadata.time] / 1000));
 			}
+		}
+		else
+		{
+			point[Metadata.ts]             = new Date((point[Metadata.time] / 1000));
+		}
 
+		unsorted.push(point);
+	}
+	unsorted.sort((a, b) => a[Metadata.ts] - b[Metadata.ts]);
+
+
+	// Now use accumulators to process the data in order and generate windowed/processed data
+	for (const point of unsorted)
+	{
+		// Only want to update accumulators if this is NOT a layer event
+		if (point[Metadata.eventType] === MetadataEventType.FEEDBACK)
+		{
+			packetsSent.accumulate(point[Metadata.sent],1);
+
+			//Check if it was lost
+			if (point[Metadata.sent] && !point[Metadata.recv])
+			{
+				//Increse lost
+				packetsLost.accumulate(point[Metadata.sent],1);
+
+				//Update received, don't increase
+				// @todo This is broken, dont have a recv time here. Probably need to change based on send times and in the else?
+				point[Metadata.bitrateRecv] = bitrateRecv.accumulate (point[Metadata.recv], 0);
+				point[Metadata.bitrateRecvLong] = bitrateRecvLong.accumulate (point[Metadata.recv], 0);
+			} 
+			else 
+			{
+				//Update lost, don't increase
+				packetsLost.accumulate(point[Metadata.sent],0);
+
+				//Add recevided bitrate
+				point[Metadata.bitrateRecv] = bitrateRecv.accumulate (point[Metadata.recv], point[Metadata.size] * 8);
+				point[Metadata.bitrateRecvLong] = bitrateRecvLong.accumulate (point[Metadata.recv], point[Metadata.size] * 8);
+			}
+			point[Metadata.lost] = 100 * packetsLost.getAccumulated () / packetsSent.getAccumulated ();
+
+			//Add sent bitrate
+			point[Metadata.bitrateSent]	= bitrateSent.accumulate (point[Metadata.sent], point[Metadata.size] * 8);
+			point[Metadata.bitrateSentLong]	= bitrateSentLong.accumulate (point[Metadata.sent], point[Metadata.size] * 8);
+			point[Metadata.bitrateMedia]	= bitrateMedia.accumulate (point[Metadata.sent], !point[Metadata.rtx] && !point[Metadata.probing] ? point[Metadata.size] * 8 : 0);
+			point[Metadata.bitrateRTX]	= bitrateRTX.accumulate (point[Metadata.sent], point[Metadata.rtx] ? point[Metadata.size] * 8 : 0);
+			point[Metadata.bitrateProbing]	= bitrateProbing.accumulate (point[Metadata.sent], point[Metadata.probing] ? point[Metadata.size] * 8 : 0);
+			point[Metadata.bitrateNonTWCC] = bitrateNonTWCC.accumulate (point[Metadata.sent], 0);
+
+
+			//If there has been a discontinuity on feedback pacekts
+			if (first || (point[Metadata.feedbackNum]!=lastFeedbackNum && ((lastFeedbackNum+1)%256)!=point[Metadata.feedbackNum]))
+			{
+				// Fix delta up to now. 
+				for(let i=firstInInterval; i<count; ++i)
+				{
+					//Set base delay to 0
+					data[i][Metadata.delay] = Math.trunc((data[i][Metadata.delay] - minAcumulatedDelta) / 1000);
+				}
+
+				//Reset accumulated delta
+				acumulatedDelta = 0;
+				minAcumulatedDelta = 0;
+
+				//This is the first of the interval
+				firstInInterval = count;
+			}
+			else
+			{
+				acumulatedDelta += point[Metadata.delta];
+			}
+
+			//Check min/maxs
+			if (!minRTT || point[Metadata.rtt] < minRTT)
+			{
+				minRTT = point[Metadata.rtt];
+			}
+
+			if (acumulatedDelta < minAcumulatedDelta)
+			{
+				minAcumulatedDelta = acumulatedDelta;
+			}
+
+			//Set network buffer delay
+			point[Metadata.delay] = acumulatedDelta;
+			
 			//Set the delay of the feedback
 			point[Metadata.fbDelay] = (point[Metadata.fb] - point[Metadata.sent])/1000;
-
-			// Rather than confuse people lets hide this when it doesnt change
-			//point[Metadata.layerBitrate] = 0;
-			// tried delet/null/undefined and only ever showed the first item on the graph
+			point[Metadata.seqPoint] = 0;
 
 			//Store last feedback packet number
 			lastFeedbackNum = point[Metadata.feedbackNum];
 			first = false;
+			lastPoint = point;
 		}
 		else
 		{
+			if (point[Metadata.eventType] === MetadataEventType.NONTWCC)
+			{
+				point[Metadata.bitrateNonTWCC] = bitrateNonTWCC.accumulate (point[Metadata.sent], point[Metadata.size] * 8);
+			}
+			else
+			{
+				point[Metadata.bitrateNonTWCC] = lastPoint !== null ? lastPoint[Metadata.bitrateNonTWCC] : 0;
+			}
+
 			// In this case all we care about is the layer change data, we will duplicate all the other data from previous point
 			point[Metadata.bitrateRecv]    = lastPoint !== null ? lastPoint[Metadata.bitrateRecv] : 0;
+			point[Metadata.bitrateRecvLong]    = lastPoint !== null ? lastPoint[Metadata.bitrateRecvLong] : 0;
 			point[Metadata.lost]           = lastPoint !== null ? lastPoint[Metadata.lost] : 0;
 			point[Metadata.bitrateSent]    = lastPoint !== null ? lastPoint[Metadata.bitrateSent] : 0;
+			point[Metadata.bitrateSentLong]    = lastPoint !== null ? lastPoint[Metadata.bitrateSentLong] : 0;
 			point[Metadata.bitrateMedia]   = lastPoint !== null ? lastPoint[Metadata.bitrateMedia] : 0;
 			point[Metadata.bitrateRTX]     = lastPoint !== null ? lastPoint[Metadata.bitrateRTX] : 0;
 			point[Metadata.bitrateProbing] = lastPoint !== null ? lastPoint[Metadata.bitrateProbing] : 0;
 			point[Metadata.delay]          = lastPoint !== null ? lastPoint[Metadata.delay] : 0;
-			point[Metadata.ts]             = new Date((point[Metadata.time] / 1000));
 			point[Metadata.fbDelay]        = lastPoint !== null ? lastPoint[Metadata.fbDelay] : 0;
+			point[Metadata.seqPoint] = 0;
 		}
 
-		lastPoint = point;
-		//append to data
-		data.push (point);
-
-		// Collect all names
 		if (Metadata.trackId in point)
 		{
+			// Collect all names
 			trackNames.add(point[Metadata.trackId]);
 
-			let encodingId = point[Metadata.encodingId];
+			// Keep track of the max target bitrate for each encoding so we can order the layers below
 			let layerTargetBitrate = point[Metadata.layerTargetBitrate];
 			if (layerTargetBitrate == 0)
 			{
 				layerTargetBitrate = point[Metadata.layerBitrate];
 			}
-
-			let currentMaxBitrate = layerMaxTargetBitrate.get(encodingId);
-			layerMaxTargetBitrate.set(encodingId, currentMaxBitrate ? Math.max(currentMaxBitrate, layerTargetBitrate) : layerTargetBitrate);
+			let currentMaxBitrate = layerMaxTargetBitrate.get(point[Metadata.encodingId]);
+			layerMaxTargetBitrate.set(point[Metadata.encodingId], currentMaxBitrate ? Math.max(currentMaxBitrate, layerTargetBitrate) : layerTargetBitrate);
 		}
 
-		//Inc count
+
+		lastPoint = point;
+		data.push (point);
 		count ++;
 	}
+
+	//Fix delta up to now
+	for(let i=firstInInterval; i<count; ++i)
+	{
+		//Set base delay to 0
+		data[i][Metadata.delay] = (data[i][Metadata.delay] - minAcumulatedDelta) / 1000;
+	}
+
+
 
 	// Collecl all track names and assign a number to each one
 	let trackNumber = 0;
@@ -261,21 +339,118 @@ function Process (csv)
 		}
 	}
 
-	//Fix delta up to now
-	for(let i=firstInInterval; i<count; ++i)
-		//Set base delay to 0
-		data[i][Metadata.delay] = (data[i][Metadata.delay] - minAcumulatedDelta) / 1000;
+
+	// Lets now fix up the times of different event types
+	//
+	// For feedback events, the timestamp is always sent time, but the report is made at feedback recv time
+	// this means that things like the reported available times, layer selected etc are all off. I.e. Will report
+	// the layer selected at time of recv instead of at the time of send.
+	//
+	// Because we export layer events when they haappen, we will just copy that data across.
+	let lastLayerEvent = 0;
+	lastPoint = 0;
 	let i = 0;
 	for (const point of data)
 	{
+		if (point[Metadata.eventType] !== MetadataEventType.FEEDBACK)
+		{
+			lastLayerEvent = i;
+
+			point[Metadata.fb]    = data[lastPoint][Metadata.fb];
+			point[Metadata.transportSeqNum]    = data[lastPoint][Metadata.transportSeqNum];
+			point[Metadata.feedbackNum]    = data[lastPoint][Metadata.feedbackNum];
+			point[Metadata.size]    = data[lastPoint][Metadata.size];
+			point[Metadata.sent]    = data[lastPoint][Metadata.sent];
+			point[Metadata.recv]    = data[lastPoint][Metadata.recv];
+			point[Metadata.deltaSent]    = data[lastPoint][Metadata.deltaSent];
+			point[Metadata.deltaRecv]    = data[lastPoint][Metadata.deltaRecv];
+			point[Metadata.delta]    = data[lastPoint][Metadata.delta];
+			point[Metadata.deltaAcumulated]    = data[lastPoint][Metadata.deltaAcumulated];
+			point[Metadata.deltaInstant]    = data[lastPoint][Metadata.deltaInstant];
+			point[Metadata.estimated]    = data[lastPoint][Metadata.estimated];
+			point[Metadata.targetBitrate]    = data[lastPoint][Metadata.targetBitrate];
+			point[Metadata.availableBitrate]    = data[lastPoint][Metadata.availableBitrate];
+			point[Metadata.rtt]    = data[lastPoint][Metadata.rtt];
+			point[Metadata.minrtt]    = data[lastPoint][Metadata.minrtt];
+			point[Metadata.estimatedrtt]    = data[lastPoint][Metadata.estimatedrtt];
+			point[Metadata.mark]    = data[lastPoint][Metadata.mark];
+			point[Metadata.rtx]    = data[lastPoint][Metadata.rtx];
+			point[Metadata.probing]    = data[lastPoint][Metadata.probing];
+			point[Metadata.state]    = data[lastPoint][Metadata.state];
+			//trackId
+			//encodingId
+			//layerBitrate
+			//layerTargetBitrate
+			//encodingBestGuessBitrate
+			//switchedFromSmooth
+
+			point[Metadata.lost]           = data[lastPoint][Metadata.lost];
+			point[Metadata.delay]          = data[lastPoint][Metadata.delay];
+			point[Metadata.target]    = data[lastPoint][Metadata.target];
+			point[Metadata.available]    = data[lastPoint][Metadata.available];
+			point[Metadata.bitrateSent]    = data[lastPoint][Metadata.bitrateSent];
+			point[Metadata.bitrateSentLong]    = data[lastPoint][Metadata.bitrateSentLong];
+			point[Metadata.bitrateRecv]    = data[lastPoint][Metadata.bitrateRecv];
+			point[Metadata.bitrateRecvLong]    = data[lastPoint][Metadata.bitrateRecvLong];
+			point[Metadata.bitrateMedia]   = data[lastPoint][Metadata.bitrateMedia];
+			point[Metadata.bitrateRTX]     = data[lastPoint][Metadata.bitrateRTX];
+			point[Metadata.bitrateProbing] = data[lastPoint][Metadata.bitrateProbing];
+			point[Metadata.fbDelay]        = data[lastPoint][Metadata.fbDelay];
+			point[Metadata.bitrateNonTWCC] = data[lastPoint][Metadata.bitrateNonTWCC];
+			//trackNumber
+			//encodingNumber
+			//smoothTransition
+		}
+		else
+		{
+			lastPoint = i;
+		}
+
+		// Update these to correct aligned values now
+		point[Metadata.trackId] = data[lastLayerEvent][Metadata.trackId];
+		point[Metadata.encodingId] = data[lastLayerEvent][Metadata.encodingId];
+		point[Metadata.layerBitrate] = data[lastLayerEvent][Metadata.layerBitrate];
+		point[Metadata.layerTargetBitrate] = data[lastLayerEvent][Metadata.layerTargetBitrate];
+		point[Metadata.encodingBestGuessBitrate] = data[lastLayerEvent][Metadata.encodingBestGuessBitrate];
+		point[Metadata.switchedFromSmooth] = data[lastLayerEvent][Metadata.switchedFromSmooth];
+
+		point[Metadata.trackNumber] = data[lastLayerEvent][Metadata.trackNumber];
+		point[Metadata.encodingNumber] = data[lastLayerEvent][Metadata.encodingNumber];
+		point[Metadata.smoothTransition] = data[lastLayerEvent][Metadata.smoothTransition];
+		point[Metadata.layerAvailable] = data[lastLayerEvent][Metadata.availableBitrate];
+
+
+		i++;
+	}
+
+	// Some values like the target bitrate, available bitrate and estimated bitrate are reported at the time
+	// of the feedback report. However the times are plotted against the sent time. So we want to try and
+	// adjust the times of these values so that they appear roughly where they happen. Otherwise we will see
+	// something like a target bitrate that appears earlier than it was.
+	/*
+	for (const point of data)
+	{
 		//Find what is the estimation when this packet was sent
-		while (i<data.length && data[i][Metadata.sent]<point[Metadata.fb])
+		while (i < data.length && (data[i][Metadata.sent] < point[Metadata.fb]))
+		{
 			//Skip until the estimation is newer than the packet time
 			i++;
+		}
+
+
 		//Set target to previous target bitate
 		point[Metadata.target] = i ? data[i-1][Metadata.targetBitrate] : 0;
 		point[Metadata.available] = i ? data[i-1][Metadata.availableBitrate] : 0;
 	}
+	*/
+	// @todo Above doesnt work any more, just copy for now
+	for (const point of data)
+	{
+		point[Metadata.target] = point[Metadata.targetBitrate];
+		point[Metadata.available] = point[Metadata.availableBitrate];
+	}
+
+
 	return data;
 }
 
@@ -550,11 +725,17 @@ function DisplayData (name,csv)
 		createBitrateSerie("Estimated"	, Metadata.estimated			, colors[i++]);
 		createBitrateSerie("Available"	, Metadata.available		, colors[i++]);
 		createBitrateSerie("Target"		, Metadata.target		, colors[i++]);
+		
 		createBitrateSerie("Total Sent"		, Metadata.bitrateSent		, colors[i++]);
+		createBitrateSerie("Long Sent"		, Metadata.bitrateSentLong		, colors[i++]);
+		
 		createBitrateSerie("Total Received"	, Metadata.bitrateRecv		, colors[i++]);
+		createBitrateSerie("Long Received"	, Metadata.bitrateRecvLong		, colors[i++]);
 		createBitrateSerie("Media"		, Metadata.bitrateMedia		, colors[i++]);
 		createBitrateSerie("RTX"		, Metadata.bitrateRTX		, colors[i++]);
 		createBitrateSerie("Probing"		, Metadata.bitrateProbing	, colors[i++]);
+		createBitrateSerie("NONTWCC"		, Metadata.bitrateNonTWCC	, colors[i++]);
+		
 	}
 
 	//Create state series an axis
@@ -579,12 +760,12 @@ function DisplayData (name,csv)
 			if (target.dataItem)
 			{
 				const v = target.dataItem.values.value.value;
-				if (v === 0) return '[black] Initial(0)';
-				else if (v === 1) return '[green] Increase(1)';
-				else if (v === 2) return '[blue] OverShoot(2)';
-				else if (v === 3) return '[orange] Congestion(3)';
-				else if (v === 4) return '[black] Recovery(4)';
-				else if (v === 5) return '[red] Loosy(5)';
+				if (v === 0) return '[#993333] Initial(0)';
+				else if (v === 1) return '[#993333] Increase(1)';
+				else if (v === 2) return '[#993333] OverShoot(2)';
+				else if (v === 3) return '[#993333] Congestion(3)';
+				else if (v === 4) return '[#993333] Recovery(4)';
+				else if (v === 5) return '[#993333] Loosy(5)';
 			}
 			return label;
 		});
@@ -739,7 +920,7 @@ function DisplayData (name,csv)
 			createBpsSeries("layerBitrate", Metadata.layerBitrate, colors[i++]);
 			createBpsSeries("layerTargetBitrate", Metadata.layerTargetBitrate, colors[i++]);
 			createBpsSeries("encodingGuessBitrate", Metadata.encodingBestGuessBitrate, colors[i++]);
-			
+			createBpsSeries("layerAvailable", Metadata.layerAvailable, colors[i++]);
 		}
 
 		//Create track/layer names series and axis
@@ -783,6 +964,9 @@ function DisplayData (name,csv)
 			createLayersSeries("trackId"		, Metadata.trackNumber, colors[i++], Metadata.trackId);
 			createLayersSeries("encodingId"		, Metadata.encodingNumber, colors[i++],  Metadata.encodingId);
 			createLayersSeries("smoothTransition"		, Metadata.switchedFromSmooth, colors[i++],  Metadata.smoothTransition);
+			createLayersSeries("eventType"		, Metadata.eventType, colors[i++],  Metadata.eventType);
+			createLayersSeries("sequence"		, Metadata.seqPoint, colors[i++],  Metadata.transportSeqNum);
+			createLayersSeries("feedback"		, Metadata.seqPoint, colors[i++],  Metadata.feedbackNum);
 		}
 
 	}
