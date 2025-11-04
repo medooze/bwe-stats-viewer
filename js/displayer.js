@@ -96,7 +96,9 @@ const Metadata = {
 	smoothTransition     : "smoothTransition",
 	seqPoint     : "seqPoint",
 	layerAvailable: "layerAvailable",
-
+	packetRate: "packetRate",
+	estimatedHeaderOverhead: "estimatedHeaderOverhead",
+	bitrateSentOverhead		: "bitrateSentOverhead",
 };
 const data = [];
 
@@ -114,6 +116,7 @@ function Process (csv)
 	const bitrateRTX	= new Accumulator (MonitorDuration);
 	const bitrateProbing	= new Accumulator (MonitorDuration);
 	const bitrateNonTWCC	= new Accumulator (MonitorDuration);
+	const packetRate	= new Accumulator (MonitorDuration);
 	
 	let lost = 0;
 	let minRTT = 0;
@@ -206,6 +209,12 @@ function Process (csv)
 			point[Metadata.bitrateProbing]	= bitrateProbing.accumulate (point[Metadata.sent], point[Metadata.probing] ? point[Metadata.size] * 8 : 0);
 			point[Metadata.bitrateNonTWCC] = bitrateNonTWCC.accumulate (point[Metadata.sent], 0);
 
+			const IP4_HEADER = 20;
+			const UDP_HEADER = 8;
+			point[Metadata.packetRate] = packetRate.accumulate (point[Metadata.sent], 1);
+			point[Metadata.estimatedHeaderOverhead] = point[Metadata.packetRate] * 8 * IP4_HEADER * UDP_HEADER;
+			point[Metadata.bitrateSentOverhead] = point[Metadata.estimatedHeaderOverhead] + point[Metadata.bitrateSent]
+
 
 			//If there has been a discontinuity on feedback pacekts
 			if (first || (point[Metadata.feedbackNum]!=lastFeedbackNum && ((lastFeedbackNum+1)%256)!=point[Metadata.feedbackNum]))
@@ -275,6 +284,10 @@ function Process (csv)
 			point[Metadata.delay]          = lastPoint !== null ? lastPoint[Metadata.delay] : 0;
 			point[Metadata.fbDelay]        = lastPoint !== null ? lastPoint[Metadata.fbDelay] : 0;
 			point[Metadata.seqPoint] = 0;
+
+			point[Metadata.packetRate]    = lastPoint !== null ? lastPoint[Metadata.packetRate] : 0;
+			point[Metadata.estimatedHeaderOverhead]    = lastPoint !== null ? lastPoint[Metadata.estimatedHeaderOverhead] : 0;
+			point[Metadata.bitrateSentOverhead]= lastPoint !== null ? lastPoint[Metadata.bitrateSentOverhead] : 0;
 		}
 
 		if (Metadata.trackId in point)
@@ -401,6 +414,10 @@ function Process (csv)
 			//trackNumber
 			//encodingNumber
 			//smoothTransition
+			point[Metadata.packetRate] = data[lastPoint][Metadata.packetRate];
+			point[Metadata.estimatedHeaderOverhead] = data[lastPoint][Metadata.estimatedHeaderOverhead];
+			point[Metadata.bitrateSentOverhead] = data[lastPoint][Metadata.bitrateSentOverhead];
+			
 		}
 		else
 		{
@@ -736,6 +753,8 @@ function DisplayData (name,csv)
 		createBitrateSerie("RTX"		, Metadata.bitrateRTX		, colors[i++]);
 		createBitrateSerie("Probing"		, Metadata.bitrateProbing	, colors[i++]);
 		createBitrateSerie("NONTWCC"		, Metadata.bitrateNonTWCC	, colors[i++]);
+		createBitrateSerie("Overhead"		, Metadata.estimatedHeaderOverhead		, colors[i++]);
+		createBitrateSerie("OHTx"		, Metadata.bitrateSentOverhead		, colors[i++]);
 		
 	}
 
@@ -801,10 +820,10 @@ function DisplayData (name,csv)
 		const chart = charts.ms;
 		//Create axis
 		var lostAxis = chart.yAxes.push (new am4charts.ValueAxis ());
-		lostAxis.renderer.labels.template.fill = am4core.color(colorHash.hex("Lost"));
+		lostAxis.renderer.labels.template.fill = am4core.color("#FF0000");
 		lostAxis.numberFormatter = new am4core.NumberFormatter ();
 		lostAxis.numberFormatter.numberFormat = "#'%'";
-		lostAxis.renderer.labels.template.fill = am4core.color (colorHash.hex ("Lost"));
+		lostAxis.renderer.labels.template.fill = am4core.color ("#FF0000");
 		lostAxis.renderer.maxWidth = lostAxis.renderer.minWidth = 120;
 		lostAxis.renderer.opposite = true;
 		lostAxis.renderer.grid.template.strokeOpacity = 0.07;
@@ -834,6 +853,49 @@ function DisplayData (name,csv)
 		
 		createPercentageSeries("Lost"		, Metadata.lost, "#FF0000");
 	}
+
+
+	//Create packets series and axis
+	{
+		//Get milliseconds chart
+		const chart = charts.ms;
+		//Create axis
+		var packetsAxis = chart.yAxes.push (new am4charts.ValueAxis ());
+		packetsAxis.renderer.labels.template.fill = am4core.color("#040303ff");
+		packetsAxis.numberFormatter = new am4core.NumberFormatter ();
+		packetsAxis.numberFormatter.numberFormat = "#'pkts'";
+		packetsAxis.renderer.labels.template.fill = am4core.color ("#040303ff");
+		packetsAxis.renderer.maxWidth = packetsAxis.renderer.minWidth = 120;
+		packetsAxis.renderer.opposite = true;
+		packetsAxis.renderer.grid.template.strokeOpacity = 0.07;
+		packetsAxis.tooltip.disabled = true;
+		packetsAxis.min = packetsAxis.minDefined = 0;
+		
+
+		function createPacketsSeries(name,field,colorValue)
+		{
+			//create color
+			const color = am4core.color(colorValue || colorHash.hex ("medooze"+name));
+			//Create serie
+			var serie = chart.series.push (new am4charts.LineSeries ());
+			serie.name = name;
+			serie.dataFields.dateX = Metadata.ts;
+			serie.dataFields.valueY = field;
+			serie.yAxis = packetsAxis;
+			serie.tooltipText = "{name}: {valueY}";
+			serie.fill = color;
+			serie.stroke = color;
+			serie.startLocation = 0;
+			serie.connect = false;
+			serie.autoGapCount = 100;
+			//Done
+			return serie;
+		}
+		
+		// @todo Create a pps series graph
+		createPacketsSeries("Packets"	, Metadata.packetRate		, "#040303ff");
+	}
+
 
 	//Create milisecond axis and rtt,delay and delta series
 	{
@@ -877,7 +939,6 @@ function DisplayData (name,csv)
 		createMSSeries("Feedback delay"	, Metadata.fbDelay		, colors[i++]);
 		createMSSeries("Delta acumulated", Metadata.deltaAcumulated	, colors[i++]);
 		createMSSeries("Detla instant"	, Metadata.deltaInstant		, colors[i++]);
-		
 	}
 
 	if (hasExtraFields)
@@ -939,7 +1000,21 @@ function DisplayData (name,csv)
 			layerAxis.renderer.grid.template.strokeOpacity = 0.07;
 			layerAxis.tooltip.disabled = true;
 			layerAxis.min = layerAxis.minDefined = 0;
-			layerAxis.max = layerAxis.maxDefined = 6;
+			layerAxis.max = layerAxis.maxDefined = 3;
+
+			// ideally we will also change the tooltip text but not sure yet how to do this mapping as some kind of custom function instead of using tooltipText
+			layerAxis.renderer.labels.template.adapter.add("text", (label, target, key) => {
+				if (target.dataItem)
+				{
+					const v = target.dataItem.values.value.value;
+					if (v === 0) return '[#040303ff] Feedback(0)';
+					else if (v === 1) return '[#040303ff] Layer(1)';
+					else if (v === 2) return '[#040303ff] Blocked(2)';
+					else if (v === 3) return '[#040303ff] NonTWCC(3)';
+				}
+				return label;
+			});
+
 
 			function createLayersSeries(name,valueField,colorValue,nameField)
 			{
@@ -965,7 +1040,7 @@ function DisplayData (name,csv)
 			createLayersSeries("trackId"		, Metadata.trackNumber, colors[i++], Metadata.trackId);
 			createLayersSeries("encodingId"		, Metadata.encodingNumber, colors[i++],  Metadata.encodingId);
 			createLayersSeries("smoothTransition"		, Metadata.switchedFromSmooth, colors[i++],  Metadata.smoothTransition);
-			createLayersSeries("eventType"		, Metadata.eventType, colors[i++],  Metadata.eventType);
+			createLayersSeries("eventType"		, Metadata.eventType, "#040303ff",  Metadata.eventType);
 			createLayersSeries("sequence"		, Metadata.seqPoint, colors[i++],  Metadata.transportSeqNum);
 			createLayersSeries("feedback"		, Metadata.seqPoint, colors[i++],  Metadata.feedbackNum);
 		}
