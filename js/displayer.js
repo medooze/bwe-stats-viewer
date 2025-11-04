@@ -24,7 +24,6 @@ class Accumulator
 		//Push new point
 		this.points.push ({time, val});
 
-		//this.add({time, val})
 		//return average in window
 		return this.accumulated*this.factor;
 	}
@@ -56,7 +55,7 @@ const Metadata = {
 	delta			: 8,
 	deltaAcumulated		: 9,
 	deltaInstant		: 10, // accumulatedDeltaMin (TODO C++ different name)
-	estimated			: 11,
+	estimatedBitrate			: 11,
 	targetBitrate		: 12,
 	availableBitrate	: 13,
 	rtt			: 14,
@@ -78,8 +77,6 @@ const Metadata = {
 
 	lost			: "lost",
 	delay			: "delay",
-	target			: "target",
-	available		: "available",
 
 	bitrateSent		: "bitrateSent",
 	bitrateSentLong		: "bitrateSentLong",
@@ -168,6 +165,8 @@ function Process (csv)
 
 		unsorted.push(point);
 	}
+	// We will then sort it by timestamp as the CSV isnt sorted this way
+	// This results in data sorted by sent time and aligning that with layer switch event time
 	unsorted.sort((a, b) => a[Metadata.ts] - b[Metadata.ts]);
 
 
@@ -186,7 +185,6 @@ function Process (csv)
 				packetsLost.accumulate(point[Metadata.sent],1);
 
 				//Update received, don't increase
-				// @todo This is broken, dont have a recv time here. Probably need to change based on send times and in the else?
 				point[Metadata.bitrateRecv] = bitrateRecv.accumulate (point[Metadata.recv], 0);
 				point[Metadata.bitrateRecvLong] = bitrateRecvLong.accumulate (point[Metadata.recv], 0);
 			} 
@@ -269,7 +267,7 @@ function Process (csv)
 			}
 			else
 			{
-				point[Metadata.bitrateNonTWCC] = lastPoint !== null ? lastPoint[Metadata.bitrateNonTWCC] : 0;
+				point[Metadata.bitrateNonTWCC] = bitrateNonTWCC.accumulate (point[Metadata.sent], 0);
 			}
 
 			// In this case all we care about is the layer change data, we will duplicate all the other data from previous point
@@ -381,7 +379,7 @@ function Process (csv)
 			point[Metadata.delta]    = data[lastPoint][Metadata.delta];
 			point[Metadata.deltaAcumulated]    = data[lastPoint][Metadata.deltaAcumulated];
 			point[Metadata.deltaInstant]    = data[lastPoint][Metadata.deltaInstant];
-			point[Metadata.estimated]    = data[lastPoint][Metadata.estimated];
+			point[Metadata.estimatedBitrate]    = data[lastPoint][Metadata.estimatedBitrate];
 			point[Metadata.targetBitrate]    = data[lastPoint][Metadata.targetBitrate];
 			point[Metadata.availableBitrate]    = data[lastPoint][Metadata.availableBitrate];
 			point[Metadata.rtt]    = data[lastPoint][Metadata.rtt];
@@ -400,8 +398,6 @@ function Process (csv)
 
 			point[Metadata.lost]           = data[lastPoint][Metadata.lost];
 			point[Metadata.delay]          = data[lastPoint][Metadata.delay];
-			point[Metadata.target]    = data[lastPoint][Metadata.target];
-			point[Metadata.available]    = data[lastPoint][Metadata.available];
 			point[Metadata.bitrateSent]    = data[lastPoint][Metadata.bitrateSent];
 			point[Metadata.bitrateSentLong]    = data[lastPoint][Metadata.bitrateSentLong];
 			point[Metadata.bitrateRecv]    = data[lastPoint][Metadata.bitrateRecv];
@@ -435,37 +431,12 @@ function Process (csv)
 		point[Metadata.trackNumber] = data[lastLayerEvent][Metadata.trackNumber];
 		point[Metadata.encodingNumber] = data[lastLayerEvent][Metadata.encodingNumber];
 		point[Metadata.smoothTransition] = data[lastLayerEvent][Metadata.smoothTransition];
+
+		// Assign the available bitrate calculated at the time this layer switched as the 
+		// layer available bitrate since it isnt in the data directly we need to assing a 
+		// calculated value here
 		point[Metadata.layerAvailable] = data[lastLayerEvent][Metadata.availableBitrate];
-
-
 		i++;
-	}
-
-	// Some values like the target bitrate, available bitrate and estimated bitrate are reported at the time
-	// of the feedback report. However the times are plotted against the sent time. So we want to try and
-	// adjust the times of these values so that they appear roughly where they happen. Otherwise we will see
-	// something like a target bitrate that appears earlier than it was.
-	/*
-	for (const point of data)
-	{
-		//Find what is the estimation when this packet was sent
-		while (i < data.length && (data[i][Metadata.sent] < point[Metadata.fb]))
-		{
-			//Skip until the estimation is newer than the packet time
-			i++;
-		}
-
-
-		//Set target to previous target bitate
-		point[Metadata.target] = i ? data[i-1][Metadata.targetBitrate] : 0;
-		point[Metadata.available] = i ? data[i-1][Metadata.availableBitrate] : 0;
-	}
-	*/
-	// @todo Above doesnt work any more, just copy for now
-	for (const point of data)
-	{
-		point[Metadata.target] = point[Metadata.targetBitrate];
-		point[Metadata.available] = point[Metadata.availableBitrate];
 	}
 
 
@@ -559,17 +530,44 @@ function DisplayData (name,csv)
 	{
 		//Chreate new chart
 		const chart = container.createChild (am4charts.XYChart);
+
+		const buttonContainer = chart.createChild(am4core.Container);
+		//buttonContainer.width = buttonContainer.height = am4core.percent (100);
+		buttonContainer.layout = "horizontal";
+		buttonContainer.reverseOrder  = true;
+
+
+		const hideButton = buttonContainer.createChild (am4core.Button);
+		hideButton.label.text = "Hide All";
+		hideButton.events.on("hit", function() {
+			for (const s of chart.series)
+			{
+				//s.visible = false;
+				s.hide();
+			}
+		});
+		const showButton = buttonContainer.createChild (am4core.Button);
+		showButton.label.text = "Show All";
+		showButton.events.on("hit", function() {
+			for (const s of chart.series)
+			{
+				//s.visible = true;
+				s.show();
+			}
+		});
+
+
 		//Set padding
 		chart.padding (10, 15, 10, 15);
 		chart.margin (10, 15, 10, 15);
 
 		if (id == "layers")
 		{
-			chart.height = am4core.percent (20);
+			chart.height = am4core.percent (25);
 		}
 		else
 		{
-			chart.height = am4core.percent (40);
+			chart.height = am4core.percent (37.5);
 		}
 
 		//Use utc time
@@ -740,21 +738,22 @@ function DisplayData (name,csv)
 		
 		let i = 0;
 		//Create all the series
-		createBitrateSerie("Estimated"	, Metadata.estimated			, colors[i++]);
-		createBitrateSerie("Available"	, Metadata.available		, colors[i++]);
-		createBitrateSerie("Target"		, Metadata.target		, colors[i++]);
+		createBitrateSerie("Estimated"	, Metadata.estimatedBitrate			, colors[i++]);
+		createBitrateSerie("Available"	, Metadata.availableBitrate		, colors[i++]);
+		createBitrateSerie("Target"		, Metadata.targetBitrate		, colors[i++]);
 		
-		createBitrateSerie("Total Sent"		, Metadata.bitrateSent		, colors[i++]);
+		createBitrateSerie("Sent"		, Metadata.bitrateSent		, colors[i++]);
 		createBitrateSerie("Long Sent"		, Metadata.bitrateSentLong		, colors[i++]);
+		createBitrateSerie("Sent+Overhead"		, Metadata.bitrateSentOverhead		, colors[i++]);
 		
-		createBitrateSerie("Total Received"	, Metadata.bitrateRecv		, colors[i++]);
+		createBitrateSerie("Received"	, Metadata.bitrateRecv		, colors[i++]);
 		createBitrateSerie("Long Received"	, Metadata.bitrateRecvLong		, colors[i++]);
+
 		createBitrateSerie("Media"		, Metadata.bitrateMedia		, colors[i++]);
 		createBitrateSerie("RTX"		, Metadata.bitrateRTX		, colors[i++]);
 		createBitrateSerie("Probing"		, Metadata.bitrateProbing	, colors[i++]);
-		createBitrateSerie("NONTWCC"		, Metadata.bitrateNonTWCC	, colors[i++]);
+		createBitrateSerie("NonTWCC"		, Metadata.bitrateNonTWCC	, colors[i++]);
 		createBitrateSerie("Overhead"		, Metadata.estimatedHeaderOverhead		, colors[i++]);
-		createBitrateSerie("OHTx"		, Metadata.bitrateSentOverhead		, colors[i++]);
 		
 	}
 
@@ -1000,17 +999,18 @@ function DisplayData (name,csv)
 			layerAxis.renderer.grid.template.strokeOpacity = 0.07;
 			layerAxis.tooltip.disabled = true;
 			layerAxis.min = layerAxis.minDefined = 0;
-			layerAxis.max = layerAxis.maxDefined = 3;
+			layerAxis.max = layerAxis.maxDefined = MetadataEventType.FLUSH;
 
 			// ideally we will also change the tooltip text but not sure yet how to do this mapping as some kind of custom function instead of using tooltipText
 			layerAxis.renderer.labels.template.adapter.add("text", (label, target, key) => {
 				if (target.dataItem)
 				{
 					const v = target.dataItem.values.value.value;
-					if (v === 0) return '[#040303ff] Feedback(0)';
-					else if (v === 1) return '[#040303ff] Layer(1)';
-					else if (v === 2) return '[#040303ff] Blocked(2)';
-					else if (v === 3) return '[#040303ff] NonTWCC(3)';
+					if (v === MetadataEventType.FEEDBACK)              return '[#040303ff] Feedback(0)';
+					else if (v === MetadataEventType.LAYER)            return '[#040303ff] Layer(1)';
+					else if (v === MetadataEventType.BLOCKED_FEEDBACK) return '[#040303ff] Blocked(2)';
+					else if (v === MetadataEventType.NONTWCC)          return '[#040303ff] NonTWCC(3)';
+					else if (v === MetadataEventType.FLUSH)            return '[#040303ff] Flush(4)';
 				}
 				return label;
 			});
