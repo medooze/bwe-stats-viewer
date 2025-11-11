@@ -414,6 +414,18 @@ function Process (csv)
 			point[Metadata.estimatedHeaderOverhead] = data[lastPoint][Metadata.estimatedHeaderOverhead];
 			point[Metadata.bitrateSentOverhead] = data[lastPoint][Metadata.bitrateSentOverhead];
 			
+			// The NON-TWCC is now very noisy for all audio packets now.
+			//
+			// We had a bug where we wanted to make all packets TWCC ones but the browsers dont support audio TWCC yet
+			//
+			// So we have a lot of NON-TWCC packets for audio which just clutters the graphs
+			//
+			// We will change it to feedback for now so that it doesnt show up in the graphs as we can see it from the bitrate already anyway
+			// and it is just too difficult to see important events otherwise
+			if (point[Metadata.eventType] === MetadataEventType.NONTWCC)
+			{
+				point[Metadata.eventType] = MetadataEventType.FEEDBACK;
+			}
 		}
 		else
 		{
@@ -853,49 +865,6 @@ function DisplayData (name,csv)
 		createPercentageSeries("Lost"		, Metadata.lost, "#FF0000");
 	}
 
-
-	//Create packets series and axis
-	{
-		//Get milliseconds chart
-		const chart = charts.ms;
-		//Create axis
-		var packetsAxis = chart.yAxes.push (new am4charts.ValueAxis ());
-		packetsAxis.renderer.labels.template.fill = am4core.color("#040303ff");
-		packetsAxis.numberFormatter = new am4core.NumberFormatter ();
-		packetsAxis.numberFormatter.numberFormat = "#'pkts'";
-		packetsAxis.renderer.labels.template.fill = am4core.color ("#040303ff");
-		packetsAxis.renderer.maxWidth = packetsAxis.renderer.minWidth = 120;
-		packetsAxis.renderer.opposite = true;
-		packetsAxis.renderer.grid.template.strokeOpacity = 0.07;
-		packetsAxis.tooltip.disabled = true;
-		packetsAxis.min = packetsAxis.minDefined = 0;
-		
-
-		function createPacketsSeries(name,field,colorValue)
-		{
-			//create color
-			const color = am4core.color(colorValue || colorHash.hex ("medooze"+name));
-			//Create serie
-			var serie = chart.series.push (new am4charts.LineSeries ());
-			serie.name = name;
-			serie.dataFields.dateX = Metadata.ts;
-			serie.dataFields.valueY = field;
-			serie.yAxis = packetsAxis;
-			serie.tooltipText = "{name}: {valueY}";
-			serie.fill = color;
-			serie.stroke = color;
-			serie.startLocation = 0;
-			serie.connect = false;
-			serie.autoGapCount = 100;
-			//Done
-			return serie;
-		}
-		
-		// @todo Create a pps series graph
-		createPacketsSeries("Packets"	, Metadata.packetRate		, "#040303ff");
-	}
-
-
 	//Create milisecond axis and rtt,delay and delta series
 	{
 		//Get milliseconds chart
@@ -939,6 +908,56 @@ function DisplayData (name,csv)
 		createMSSeries("Delta acumulated", Metadata.deltaAcumulated	, colors[i++]);
 		createMSSeries("Detla instant"	, Metadata.deltaInstant		, colors[i++]);
 	}
+
+	// 	Adding this shifts the x-axis size and makes the other charts misaligned.
+	// 
+	// So we dont want to add this be default until we have a way of forcing the 
+	// different charts to be aligned. For now we will display this if a URL &packets
+	// exists on the URL.
+	//
+	// Additionally adding another graph to the page makes viewing unwieldly. 
+	const href = new URL(window.location.href);
+	if (href.searchParams.has("packets"))
+	{
+		//Get milliseconds chart
+		const chart = charts.ms;
+
+		//Create axis
+		var packetsAxis = chart.yAxes.push (new am4charts.ValueAxis ());
+		packetsAxis.renderer.labels.template.fill = am4core.color("#040303ff");
+		packetsAxis.numberFormatter = new am4core.NumberFormatter ();
+		packetsAxis.numberFormatter.numberFormat = "#'pkts'";
+		packetsAxis.renderer.labels.template.fill = am4core.color ("#040303ff");
+		packetsAxis.renderer.maxWidth = packetsAxis.renderer.minWidth = 120;
+		packetsAxis.renderer.opposite = true;
+		packetsAxis.renderer.grid.template.strokeOpacity = 0.07;
+		packetsAxis.tooltip.disabled = true;
+		packetsAxis.min = packetsAxis.minDefined = 0;
+		
+
+		function createPacketsSeries(name,field,colorValue)
+		{
+			//create color
+			const color = am4core.color(colorValue || colorHash.hex ("medooze"+name));
+			//Create serie
+			var serie = chart.series.push (new am4charts.LineSeries ());
+			serie.name = name;
+			serie.dataFields.dateX = Metadata.ts;
+			serie.dataFields.valueY = field;
+			serie.yAxis = packetsAxis;
+			serie.tooltipText = "{name}: {valueY}";
+			serie.fill = color;
+			serie.stroke = color;
+			serie.startLocation = 0;
+			serie.connect = false;
+			serie.autoGapCount = 100;
+			//Done
+			return serie;
+		}
+		
+		createPacketsSeries("Packets"	, Metadata.packetRate		, "#040303ff");
+	}
+
 
 	if (hasExtraFields)
 	{
