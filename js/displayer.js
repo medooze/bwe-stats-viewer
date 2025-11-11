@@ -155,12 +155,12 @@ function Process (csv)
 			}
 			else
 			{
-				point[Metadata.ts]             = new Date((point[Metadata.time] / 1000));
+				point[Metadata.ts] = new Date((point[Metadata.time] / 1000));
 			}
 		}
 		else
 		{
-			point[Metadata.ts]             = new Date((point[Metadata.time] / 1000));
+			point[Metadata.ts] = new Date((point[Metadata.time] / 1000));
 		}
 
 		unsorted.push(point);
@@ -173,7 +173,7 @@ function Process (csv)
 	// Now use accumulators to process the data in order and generate windowed/processed data
 	for (const point of unsorted)
 	{
-		// Only want to update accumulators if this is NOT a layer event
+		// We want to update accumulators for normal data events (FEEDBACK/FLUSH)
 		if (point[Metadata.eventType] === MetadataEventType.FEEDBACK || point[Metadata.eventType] === MetadataEventType.FLUSH)
 		{
 			packetsSent.accumulate(point[Metadata.sent],1);
@@ -416,9 +416,7 @@ function Process (csv)
 			
 			// The NON-TWCC is now very noisy for all audio packets now.
 			//
-			// We had a bug where we wanted to make all packets TWCC ones but the browsers dont support audio TWCC yet
-			//
-			// So we have a lot of NON-TWCC packets for audio which just clutters the graphs
+			// We had a bug where we wanted to make all packets TWCC ones but the browsers dont support audio TWCC yet. So we have a lot of NON-TWCC packets for audio which just clutters the graphs.
 			//
 			// We will change it to feedback for now so that it doesnt show up in the graphs as we can see it from the bitrate already anyway
 			// and it is just too difficult to see important events otherwise
@@ -787,16 +785,17 @@ function DisplayData (name,csv)
 		stateAxis.max = stateAxis.maxDefined = 6;
 
 		// ideally we will also change the tooltip text but not sure yet how to do this mapping as some kind of custom function instead of using tooltipText
+		const stateColour = "#993333";
 		stateAxis.renderer.labels.template.adapter.add("text", (label, target, key) => {
 			if (target.dataItem)
 			{
 				const v = target.dataItem.values.value.value;
-				if (v === 0) return '[#993333] Initial(0)';
-				else if (v === 1) return '[#993333] Increase(1)';
-				else if (v === 2) return '[#993333] OverShoot(2)';
-				else if (v === 3) return '[#993333] Congestion(3)';
-				else if (v === 4) return '[#993333] Recovery(4)';
-				else if (v === 5) return '[#993333] Loosy(5)';
+				if (v === 0) return [`[${stateColour}] Initial(0)`];
+				else if (v === 1) return `[${stateColour}] Increase(1)`;
+				else if (v === 2) return `[${stateColour}] OverShoot(2)`;
+				else if (v === 3) return `[${stateColour}] Congestion(3)`;
+				else if (v === 4) return `[${stateColour}] Recovery(4)`;
+				else if (v === 5) return `[${stateColour}] Loosy(5)`;
 			}
 			return label;
 		});
@@ -822,7 +821,7 @@ function DisplayData (name,csv)
 			return serie;
 		}
 		
-		createStateSeries("state"		, Metadata.state, "#993333");
+		createStateSeries("state"		, Metadata.state, stateColour);
 	}
 
 	//Create lost series and axis
