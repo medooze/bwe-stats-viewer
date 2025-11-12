@@ -18,8 +18,12 @@ class Accumulator
 			this.accumulated -= this.points.shift ().val;
 		//Accumulate
 		this.accumulated += val;
+
+		// Note: The above shifting accumulator requires that the data be in order to work properly
+
 		//Push new point
 		this.points.push ({time, val});
+
 		//return average in window
 		return this.accumulated*this.factor;
 	}
@@ -30,6 +34,14 @@ class Accumulator
 	}
 };
 const colors = ["#E69F00", "#56B4E9", "#009E73", "#65118fff", "#0072B2", "#D55E00", "#CC79A7", "#000000", "#CC00FF"]
+
+const MetadataEventType = {
+	FEEDBACK: 0,
+	LAYER: 1,
+	BLOCKED_FEEDBACK: 2,
+	NONTWCC: 3,
+	FLUSH: 4,
+};
 
 const Metadata = {
 	fb			: 0,
@@ -43,7 +55,7 @@ const Metadata = {
 	delta			: 8,
 	deltaAcumulated		: 9,
 	deltaInstant		: 10, // accumulatedDeltaMin (TODO C++ different name)
-	estimated			: 11,
+	estimatedBitrate			: 11,
 	targetBitrate		: 12,
 	availableBitrate	: 13,
 	rtt			: 14,
@@ -60,22 +72,30 @@ const Metadata = {
 	encodingBestGuessBitrate: 25,
 	switchedFromSmooth: 26,
 	time: 27,
-	isLayerEvent: 28,
+	eventType: 28,
 	csvDataItems: 29,
+
 	lost			: "lost",
 	delay			: "delay",
-	target			: "target",
-	available		: "available",
+
 	bitrateSent		: "bitrateSent",
+	bitrateSentLong		: "bitrateSentLong",
 	bitrateRecv		: "bitrateReceived",
+	bitrateRecvLong		: "bitrateReceivedLong",
 	bitrateMedia		: "bitrateMedia",
 	bitrateRTX		: "bitrateRTX",
 	bitrateProbing		: "bitrateProbing",
+	bitrateNonTWCC		: "bitrateNonTWCC",
 	ts			: "ts",
 	fbDelay			: "fbDelay",
 	trackNumber     : "trackNumber",
 	encodingNumber     : "encodingNumber",
-	smoothTransition     : "smoothTransition"
+	smoothTransition     : "smoothTransition",
+	seqPoint     : "seqPoint",
+	layerAvailable: "layerAvailable",
+	packetRate: "packetRate",
+	estimatedHeaderOverhead: "estimatedHeaderOverhead",
+	bitrateSentOverhead		: "bitrateSentOverhead",
 };
 const data = [];
 
@@ -86,10 +106,14 @@ function Process (csv)
 	const packetsSent	= new Accumulator (MonitorDuration);
 	const packetsLost	= new Accumulator (MonitorDuration);
 	const bitrateSent	= new Accumulator (MonitorDuration);
+	const bitrateSentLong	= new Accumulator (5000000);
 	const bitrateRecv	= new Accumulator (MonitorDuration);
+	const bitrateRecvLong	= new Accumulator (5000000);
 	const bitrateMedia	= new Accumulator (MonitorDuration);
 	const bitrateRTX	= new Accumulator (MonitorDuration);
 	const bitrateProbing	= new Accumulator (MonitorDuration);
+	const bitrateNonTWCC	= new Accumulator (MonitorDuration);
+	const packetRate	= new Accumulator (MonitorDuration);
 	
 	let lost = 0;
 	let minRTT = 0;
@@ -107,7 +131,9 @@ function Process (csv)
 	let lastPoint = null;
 
 	console.log(`Processing csv file`);
+
 	//Convert each line to array
+	const unsorted = [];
 	for (let ini = 0, end = csv.indexOf ("\n", ini); end != -1; ini = end + 1, end = csv.indexOf ("\n", ini))
 	{
 		//get line
@@ -120,55 +146,8 @@ function Process (csv)
 		point.length = Metadata.csvDataItems;
 		point.fill(undefined, originalLength);
 
-		// Only want to update accumulators if this is NOT a layer event
-		if (!point[Metadata.isLayerEvent])
+		if (point[Metadata.eventType] === MetadataEventType.FEEDBACK)
 		{
-			//One more packet
-			packetsSent.accumulate(point[Metadata.sent],1);
-			//Check if it was lost
-			if (point[Metadata.sent] && !point[Metadata.recv])
-			{
-				//Increse lost
-				packetsLost.accumulate(point[Metadata.sent],1);
-				//Update received, don't increase
-				point[Metadata.bitrateRecv] = bitrateRecv.accumulate (point[Metadata.recv], 0);
-			} else {
-				//Update lost, don't increase
-				packetsLost.accumulate(point[Metadata.sent],0);
-				//Add recevided bitrate
-				point[Metadata.bitrateRecv] = bitrateRecv.accumulate (point[Metadata.recv], point[Metadata.size] * 8);
-			}
-			//Add lost count
-			point[Metadata.lost] = 100 * packetsLost.getAccumulated () / packetsSent.getAccumulated ();
-			//Add sent bitrate
-			point[Metadata.bitrateSent]	= bitrateSent.accumulate (point[Metadata.sent], point[Metadata.size] * 8);
-			point[Metadata.bitrateMedia]	= bitrateMedia.accumulate (point[Metadata.sent], !point[Metadata.rtx] && !point[Metadata.probing] ? point[Metadata.size] * 8 : 0);
-			point[Metadata.bitrateRTX]	= bitrateRTX.accumulate (point[Metadata.sent], point[Metadata.rtx] ? point[Metadata.size] * 8 : 0);
-			point[Metadata.bitrateProbing]	= bitrateProbing.accumulate (point[Metadata.sent], point[Metadata.probing] ? point[Metadata.size] * 8 : 0);
-			//If there has been a discontinuity on feedback pacekts
-			if (first || (point[Metadata.feedbackNum]!=lastFeedbackNum && ((lastFeedbackNum+1)%256)!=point[Metadata.feedbackNum]))
-			{
-				//Fix delta up to now
-				for(let i=firstInInterval; i<count; ++i)
-					//Set base delay to 0
-					data[i][Metadata.delay] = Math.trunc((data[i][Metadata.delay] - minAcumulatedDelta) / 1000);
-				//Reset accumulated delta
-				acumulatedDelta = 0;
-				minAcumulatedDelta = 0;
-				//This is the first of the interval
-				firstInInterval = count;
-			} else {
-				//Get accumulated delta
-				acumulatedDelta += point[Metadata.delta];
-			}
-			//Check min/maxs
-			if (!minRTT || point[Metadata.rtt] < minRTT)
-				minRTT = point[Metadata.rtt];
-			if (acumulatedDelta < minAcumulatedDelta)
-				minAcumulatedDelta = acumulatedDelta;
-			//Set network buffer delay
-			point[Metadata.delay] = acumulatedDelta;
-			
 			// Old version used sent time, new version has a field for the time
 			if (point[Metadata.time] === undefined)
 			{
@@ -176,57 +155,168 @@ function Process (csv)
 			}
 			else
 			{
-				point[Metadata.ts]             = new Date((point[Metadata.time] / 1000));
+				point[Metadata.ts] = new Date((point[Metadata.time] / 1000));
+			}
+		}
+		else
+		{
+			point[Metadata.ts] = new Date((point[Metadata.time] / 1000));
+		}
+
+		unsorted.push(point);
+	}
+	// We will then sort it by timestamp as the CSV isnt sorted this way
+	// This results in data sorted by sent time and aligning that with layer switch event time
+	unsorted.sort((a, b) => a[Metadata.ts] - b[Metadata.ts]);
+
+
+	// Now use accumulators to process the data in order and generate windowed/processed data
+	for (const point of unsorted)
+	{
+		// We want to update accumulators for normal data events (FEEDBACK/FLUSH)
+		if (point[Metadata.eventType] === MetadataEventType.FEEDBACK || point[Metadata.eventType] === MetadataEventType.FLUSH)
+		{
+			packetsSent.accumulate(point[Metadata.sent],1);
+
+			//Check if it was lost
+			if (point[Metadata.sent] && !point[Metadata.recv])
+			{
+				//Increse lost
+				packetsLost.accumulate(point[Metadata.sent],1);
+
+				//Update received, don't increase
+				point[Metadata.bitrateRecv] = bitrateRecv.accumulate (point[Metadata.recv], 0);
+				point[Metadata.bitrateRecvLong] = bitrateRecvLong.accumulate (point[Metadata.recv], 0);
+			} 
+			else 
+			{
+				//Update lost, don't increase
+				packetsLost.accumulate(point[Metadata.sent],0);
+
+				//Add recevided bitrate
+				point[Metadata.bitrateRecv] = bitrateRecv.accumulate (point[Metadata.recv], point[Metadata.size] * 8);
+				point[Metadata.bitrateRecvLong] = bitrateRecvLong.accumulate (point[Metadata.recv], point[Metadata.size] * 8);
+			}
+			point[Metadata.lost] = 100 * packetsLost.getAccumulated () / packetsSent.getAccumulated ();
+
+			//Add sent bitrate
+			point[Metadata.bitrateSent]	= bitrateSent.accumulate (point[Metadata.sent], point[Metadata.size] * 8);
+			point[Metadata.bitrateSentLong]	= bitrateSentLong.accumulate (point[Metadata.sent], point[Metadata.size] * 8);
+			point[Metadata.bitrateMedia]	= bitrateMedia.accumulate (point[Metadata.sent], !point[Metadata.rtx] && !point[Metadata.probing] ? point[Metadata.size] * 8 : 0);
+			point[Metadata.bitrateRTX]	= bitrateRTX.accumulate (point[Metadata.sent], point[Metadata.rtx] ? point[Metadata.size] * 8 : 0);
+			point[Metadata.bitrateProbing]	= bitrateProbing.accumulate (point[Metadata.sent], point[Metadata.probing] ? point[Metadata.size] * 8 : 0);
+			point[Metadata.bitrateNonTWCC] = bitrateNonTWCC.accumulate (point[Metadata.sent], 0);
+
+			const IP4_HEADER = 20;
+			const UDP_HEADER = 8;
+			point[Metadata.packetRate] = packetRate.accumulate (point[Metadata.sent], 1);
+			point[Metadata.estimatedHeaderOverhead] = point[Metadata.packetRate] * 8 * IP4_HEADER * UDP_HEADER;
+			point[Metadata.bitrateSentOverhead] = point[Metadata.estimatedHeaderOverhead] + point[Metadata.bitrateSent]
+
+
+			//If there has been a discontinuity on feedback pacekts
+			if (first || (point[Metadata.feedbackNum]!=lastFeedbackNum && ((lastFeedbackNum+1)%256)!=point[Metadata.feedbackNum]))
+			{
+				// Fix delta up to now. 
+				for(let i=firstInInterval; i<count; ++i)
+				{
+					//Set base delay to 0
+					data[i][Metadata.delay] = Math.trunc((data[i][Metadata.delay] - minAcumulatedDelta) / 1000);
+				}
+
+				//Reset accumulated delta
+				acumulatedDelta = 0;
+				minAcumulatedDelta = 0;
+
+				//This is the first of the interval
+				firstInInterval = count;
+			}
+			else
+			{
+				acumulatedDelta += point[Metadata.delta];
 			}
 
+			//Check min/maxs
+			if (!minRTT || point[Metadata.rtt] < minRTT)
+			{
+				minRTT = point[Metadata.rtt];
+			}
+
+			if (acumulatedDelta < minAcumulatedDelta)
+			{
+				minAcumulatedDelta = acumulatedDelta;
+			}
+
+			//Set network buffer delay
+			point[Metadata.delay] = acumulatedDelta;
+			
 			//Set the delay of the feedback
 			point[Metadata.fbDelay] = (point[Metadata.fb] - point[Metadata.sent])/1000;
-
-			// Rather than confuse people lets hide this when it doesnt change
-			//point[Metadata.layerBitrate] = 0;
-			// tried delet/null/undefined and only ever showed the first item on the graph
+			point[Metadata.seqPoint] = 0;
 
 			//Store last feedback packet number
 			lastFeedbackNum = point[Metadata.feedbackNum];
 			first = false;
+			lastPoint = point;
 		}
 		else
 		{
+			if (point[Metadata.eventType] === MetadataEventType.NONTWCC)
+			{
+				point[Metadata.bitrateNonTWCC] = bitrateNonTWCC.accumulate (point[Metadata.sent], point[Metadata.size] * 8);
+			}
+			else
+			{
+				point[Metadata.bitrateNonTWCC] = bitrateNonTWCC.accumulate (point[Metadata.sent], 0);
+			}
+
 			// In this case all we care about is the layer change data, we will duplicate all the other data from previous point
 			point[Metadata.bitrateRecv]    = lastPoint !== null ? lastPoint[Metadata.bitrateRecv] : 0;
+			point[Metadata.bitrateRecvLong]    = lastPoint !== null ? lastPoint[Metadata.bitrateRecvLong] : 0;
 			point[Metadata.lost]           = lastPoint !== null ? lastPoint[Metadata.lost] : 0;
 			point[Metadata.bitrateSent]    = lastPoint !== null ? lastPoint[Metadata.bitrateSent] : 0;
+			point[Metadata.bitrateSentLong]    = lastPoint !== null ? lastPoint[Metadata.bitrateSentLong] : 0;
 			point[Metadata.bitrateMedia]   = lastPoint !== null ? lastPoint[Metadata.bitrateMedia] : 0;
 			point[Metadata.bitrateRTX]     = lastPoint !== null ? lastPoint[Metadata.bitrateRTX] : 0;
 			point[Metadata.bitrateProbing] = lastPoint !== null ? lastPoint[Metadata.bitrateProbing] : 0;
 			point[Metadata.delay]          = lastPoint !== null ? lastPoint[Metadata.delay] : 0;
-			point[Metadata.ts]             = new Date((point[Metadata.time] / 1000));
 			point[Metadata.fbDelay]        = lastPoint !== null ? lastPoint[Metadata.fbDelay] : 0;
+			point[Metadata.seqPoint] = 0;
+
+			point[Metadata.packetRate]    = lastPoint !== null ? lastPoint[Metadata.packetRate] : 0;
+			point[Metadata.estimatedHeaderOverhead]    = lastPoint !== null ? lastPoint[Metadata.estimatedHeaderOverhead] : 0;
+			point[Metadata.bitrateSentOverhead]= lastPoint !== null ? lastPoint[Metadata.bitrateSentOverhead] : 0;
 		}
 
-		lastPoint = point;
-		//append to data
-		data.push (point);
-
-		// Collect all names
 		if (Metadata.trackId in point)
 		{
+			// Collect all names
 			trackNames.add(point[Metadata.trackId]);
 
-			let encodingId = point[Metadata.encodingId];
+			// Keep track of the max target bitrate for each encoding so we can order the layers below
 			let layerTargetBitrate = point[Metadata.layerTargetBitrate];
 			if (layerTargetBitrate == 0)
 			{
 				layerTargetBitrate = point[Metadata.layerBitrate];
 			}
-
-			let currentMaxBitrate = layerMaxTargetBitrate.get(encodingId);
-			layerMaxTargetBitrate.set(encodingId, currentMaxBitrate ? Math.max(currentMaxBitrate, layerTargetBitrate) : layerTargetBitrate);
+			let currentMaxBitrate = layerMaxTargetBitrate.get(point[Metadata.encodingId]);
+			layerMaxTargetBitrate.set(point[Metadata.encodingId], currentMaxBitrate ? Math.max(currentMaxBitrate, layerTargetBitrate) : layerTargetBitrate);
 		}
 
-		//Inc count
+
+		lastPoint = point;
+		data.push (point);
 		count ++;
 	}
+
+	//Fix delta up to now
+	for(let i=firstInInterval; i<count; ++i)
+	{
+		//Set base delay to 0
+		data[i][Metadata.delay] = (data[i][Metadata.delay] - minAcumulatedDelta) / 1000;
+	}
+
+
 
 	// Collecl all track names and assign a number to each one
 	let trackNumber = 0;
@@ -261,21 +351,105 @@ function Process (csv)
 		}
 	}
 
-	//Fix delta up to now
-	for(let i=firstInInterval; i<count; ++i)
-		//Set base delay to 0
-		data[i][Metadata.delay] = (data[i][Metadata.delay] - minAcumulatedDelta) / 1000;
+
+	// Lets now fix up the times of different event types
+	//
+	// For feedback events, the timestamp is always sent time, but the report is made at feedback recv time
+	// this means that things like the reported available times, layer selected etc are all off. I.e. Will report
+	// the layer selected at time of recv instead of at the time of send.
+	//
+	// Because we export layer events when they haappen, we will just copy that data across.
+	let lastLayerEvent = 0;
+	lastPoint = 0;
 	let i = 0;
 	for (const point of data)
 	{
-		//Find what is the estimation when this packet was sent
-		while (i<data.length && data[i][Metadata.sent]<point[Metadata.fb])
-			//Skip until the estimation is newer than the packet time
-			i++;
-		//Set target to previous target bitate
-		point[Metadata.target] = i ? data[i-1][Metadata.targetBitrate] : 0;
-		point[Metadata.available] = i ? data[i-1][Metadata.availableBitrate] : 0;
+		if (point[Metadata.eventType] !== MetadataEventType.FEEDBACK && point[Metadata.eventType] !== MetadataEventType.FLUSH)
+		{
+			lastLayerEvent = i;
+
+			point[Metadata.fb]    = data[lastPoint][Metadata.fb];
+			point[Metadata.transportSeqNum]    = data[lastPoint][Metadata.transportSeqNum];
+			point[Metadata.feedbackNum]    = data[lastPoint][Metadata.feedbackNum];
+			point[Metadata.size]    = data[lastPoint][Metadata.size];
+			point[Metadata.sent]    = data[lastPoint][Metadata.sent];
+			point[Metadata.recv]    = data[lastPoint][Metadata.recv];
+			point[Metadata.deltaSent]    = data[lastPoint][Metadata.deltaSent];
+			point[Metadata.deltaRecv]    = data[lastPoint][Metadata.deltaRecv];
+			point[Metadata.delta]    = data[lastPoint][Metadata.delta];
+			point[Metadata.deltaAcumulated]    = data[lastPoint][Metadata.deltaAcumulated];
+			point[Metadata.deltaInstant]    = data[lastPoint][Metadata.deltaInstant];
+			point[Metadata.estimatedBitrate]    = data[lastPoint][Metadata.estimatedBitrate];
+			point[Metadata.targetBitrate]    = data[lastPoint][Metadata.targetBitrate];
+			point[Metadata.availableBitrate]    = data[lastPoint][Metadata.availableBitrate];
+			point[Metadata.rtt]    = data[lastPoint][Metadata.rtt];
+			point[Metadata.minrtt]    = data[lastPoint][Metadata.minrtt];
+			point[Metadata.estimatedrtt]    = data[lastPoint][Metadata.estimatedrtt];
+			point[Metadata.mark]    = data[lastPoint][Metadata.mark];
+			point[Metadata.rtx]    = data[lastPoint][Metadata.rtx];
+			point[Metadata.probing]    = data[lastPoint][Metadata.probing];
+			point[Metadata.state]    = data[lastPoint][Metadata.state];
+			//trackId
+			//encodingId
+			//layerBitrate
+			//layerTargetBitrate
+			//encodingBestGuessBitrate
+			//switchedFromSmooth
+
+			point[Metadata.lost]           = data[lastPoint][Metadata.lost];
+			point[Metadata.delay]          = data[lastPoint][Metadata.delay];
+			point[Metadata.bitrateSent]    = data[lastPoint][Metadata.bitrateSent];
+			point[Metadata.bitrateSentLong]    = data[lastPoint][Metadata.bitrateSentLong];
+			point[Metadata.bitrateRecv]    = data[lastPoint][Metadata.bitrateRecv];
+			point[Metadata.bitrateRecvLong]    = data[lastPoint][Metadata.bitrateRecvLong];
+			point[Metadata.bitrateMedia]   = data[lastPoint][Metadata.bitrateMedia];
+			point[Metadata.bitrateRTX]     = data[lastPoint][Metadata.bitrateRTX];
+			point[Metadata.bitrateProbing] = data[lastPoint][Metadata.bitrateProbing];
+			point[Metadata.fbDelay]        = data[lastPoint][Metadata.fbDelay];
+			point[Metadata.bitrateNonTWCC] = data[lastPoint][Metadata.bitrateNonTWCC];
+			//trackNumber
+			//encodingNumber
+			//smoothTransition
+			point[Metadata.packetRate] = data[lastPoint][Metadata.packetRate];
+			point[Metadata.estimatedHeaderOverhead] = data[lastPoint][Metadata.estimatedHeaderOverhead];
+			point[Metadata.bitrateSentOverhead] = data[lastPoint][Metadata.bitrateSentOverhead];
+			
+			// The NON-TWCC is now very noisy for all audio packets now.
+			//
+			// We had a bug where we wanted to make all packets TWCC ones but the browsers dont support audio TWCC yet. So we have a lot of NON-TWCC packets for audio which just clutters the graphs.
+			//
+			// We will change it to feedback for now so that it doesnt show up in the graphs as we can see it from the bitrate already anyway
+			// and it is just too difficult to see important events otherwise
+			if (point[Metadata.eventType] === MetadataEventType.NONTWCC)
+			{
+				point[Metadata.eventType] = MetadataEventType.FEEDBACK;
+			}
+		}
+		else
+		{
+			lastPoint = i;
+		}
+
+		// Update these to correct aligned values now
+		point[Metadata.trackId] = data[lastLayerEvent][Metadata.trackId];
+		point[Metadata.encodingId] = data[lastLayerEvent][Metadata.encodingId];
+		point[Metadata.layerBitrate] = data[lastLayerEvent][Metadata.layerBitrate];
+		point[Metadata.layerTargetBitrate] = data[lastLayerEvent][Metadata.layerTargetBitrate];
+		point[Metadata.encodingBestGuessBitrate] = data[lastLayerEvent][Metadata.encodingBestGuessBitrate];
+		point[Metadata.switchedFromSmooth] = data[lastLayerEvent][Metadata.switchedFromSmooth];
+
+		point[Metadata.trackNumber] = data[lastLayerEvent][Metadata.trackNumber];
+		point[Metadata.encodingNumber] = data[lastLayerEvent][Metadata.encodingNumber];
+		point[Metadata.smoothTransition] = data[lastLayerEvent][Metadata.smoothTransition];
+
+		// Assign the available bitrate calculated at the time this layer switched as the 
+		// layer available bitrate since it isnt in the data directly we need to assing a 
+		// calculated value here
+		point[Metadata.layerAvailable] = data[lastLayerEvent][Metadata.availableBitrate];
+		i++;
 	}
+
+
 	return data;
 }
 
@@ -366,17 +540,44 @@ function DisplayData (name,csv)
 	{
 		//Chreate new chart
 		const chart = container.createChild (am4charts.XYChart);
+
+		const buttonContainer = chart.createChild(am4core.Container);
+		//buttonContainer.width = buttonContainer.height = am4core.percent (100);
+		buttonContainer.layout = "horizontal";
+		buttonContainer.reverseOrder  = true;
+
+
+		const hideButton = buttonContainer.createChild (am4core.Button);
+		hideButton.label.text = "Hide All";
+		hideButton.events.on("hit", function() {
+			for (const s of chart.series)
+			{
+				//s.visible = false;
+				s.hide();
+			}
+		});
+		const showButton = buttonContainer.createChild (am4core.Button);
+		showButton.label.text = "Show All";
+		showButton.events.on("hit", function() {
+			for (const s of chart.series)
+			{
+				//s.visible = true;
+				s.show();
+			}
+		});
+
+
 		//Set padding
 		chart.padding (10, 15, 10, 15);
 		chart.margin (10, 15, 10, 15);
 
 		if (id == "layers")
 		{
-			chart.height = am4core.percent (20);
+			chart.height = am4core.percent (25);
 		}
 		else
 		{
-			chart.height = am4core.percent (40);
+			chart.height = am4core.percent (37.5);
 		}
 
 		//Use utc time
@@ -547,14 +748,23 @@ function DisplayData (name,csv)
 		
 		let i = 0;
 		//Create all the series
-		createBitrateSerie("Estimated"	, Metadata.estimated			, colors[i++]);
-		createBitrateSerie("Available"	, Metadata.available		, colors[i++]);
-		createBitrateSerie("Target"		, Metadata.target		, colors[i++]);
-		createBitrateSerie("Total Sent"		, Metadata.bitrateSent		, colors[i++]);
-		createBitrateSerie("Total Received"	, Metadata.bitrateRecv		, colors[i++]);
+		createBitrateSerie("Estimated"	, Metadata.estimatedBitrate			, colors[i++]);
+		createBitrateSerie("Available"	, Metadata.availableBitrate		, colors[i++]);
+		createBitrateSerie("Target"		, Metadata.targetBitrate		, colors[i++]);
+		
+		createBitrateSerie("Sent"		, Metadata.bitrateSent		, colors[i++]);
+		createBitrateSerie("Long Sent"		, Metadata.bitrateSentLong		, colors[i++]);
+		createBitrateSerie("Sent+Overhead"		, Metadata.bitrateSentOverhead		, colors[i++]);
+		
+		createBitrateSerie("Received"	, Metadata.bitrateRecv		, colors[i++]);
+		createBitrateSerie("Long Received"	, Metadata.bitrateRecvLong		, colors[i++]);
+
 		createBitrateSerie("Media"		, Metadata.bitrateMedia		, colors[i++]);
 		createBitrateSerie("RTX"		, Metadata.bitrateRTX		, colors[i++]);
 		createBitrateSerie("Probing"		, Metadata.bitrateProbing	, colors[i++]);
+		createBitrateSerie("NonTWCC"		, Metadata.bitrateNonTWCC	, colors[i++]);
+		createBitrateSerie("Overhead"		, Metadata.estimatedHeaderOverhead		, colors[i++]);
+		
 	}
 
 	//Create state series an axis
@@ -575,16 +785,17 @@ function DisplayData (name,csv)
 		stateAxis.max = stateAxis.maxDefined = 6;
 
 		// ideally we will also change the tooltip text but not sure yet how to do this mapping as some kind of custom function instead of using tooltipText
+		const stateColour = "#993333";
 		stateAxis.renderer.labels.template.adapter.add("text", (label, target, key) => {
 			if (target.dataItem)
 			{
 				const v = target.dataItem.values.value.value;
-				if (v === 0) return '[black] Initial(0)';
-				else if (v === 1) return '[green] Increase(1)';
-				else if (v === 2) return '[blue] OverShoot(2)';
-				else if (v === 3) return '[orange] Congestion(3)';
-				else if (v === 4) return '[black] Recovery(4)';
-				else if (v === 5) return '[red] Loosy(5)';
+				if (v === 0) return [`[${stateColour}] Initial(0)`];
+				else if (v === 1) return `[${stateColour}] Increase(1)`;
+				else if (v === 2) return `[${stateColour}] OverShoot(2)`;
+				else if (v === 3) return `[${stateColour}] Congestion(3)`;
+				else if (v === 4) return `[${stateColour}] Recovery(4)`;
+				else if (v === 5) return `[${stateColour}] Loosy(5)`;
 			}
 			return label;
 		});
@@ -610,7 +821,7 @@ function DisplayData (name,csv)
 			return serie;
 		}
 		
-		createStateSeries("state"		, Metadata.state, "#993333");
+		createStateSeries("state"		, Metadata.state, stateColour);
 	}
 
 	//Create lost series and axis
@@ -619,10 +830,10 @@ function DisplayData (name,csv)
 		const chart = charts.ms;
 		//Create axis
 		var lostAxis = chart.yAxes.push (new am4charts.ValueAxis ());
-		lostAxis.renderer.labels.template.fill = am4core.color(colorHash.hex("Lost"));
+		lostAxis.renderer.labels.template.fill = am4core.color("#FF0000");
 		lostAxis.numberFormatter = new am4core.NumberFormatter ();
 		lostAxis.numberFormatter.numberFormat = "#'%'";
-		lostAxis.renderer.labels.template.fill = am4core.color (colorHash.hex ("Lost"));
+		lostAxis.renderer.labels.template.fill = am4core.color ("#FF0000");
 		lostAxis.renderer.maxWidth = lostAxis.renderer.minWidth = 120;
 		lostAxis.renderer.opposite = true;
 		lostAxis.renderer.grid.template.strokeOpacity = 0.07;
@@ -695,8 +906,57 @@ function DisplayData (name,csv)
 		createMSSeries("Feedback delay"	, Metadata.fbDelay		, colors[i++]);
 		createMSSeries("Delta acumulated", Metadata.deltaAcumulated	, colors[i++]);
 		createMSSeries("Detla instant"	, Metadata.deltaInstant		, colors[i++]);
-		
 	}
+
+	// 	Adding this shifts the x-axis size and makes the other charts misaligned.
+	// 
+	// So we dont want to add this be default until we have a way of forcing the 
+	// different charts to be aligned. For now we will display this if a URL &packets
+	// exists on the URL.
+	//
+	// Additionally adding another graph to the page makes viewing unwieldly. 
+	const href = new URL(window.location.href);
+	if (href.searchParams.has("packets"))
+	{
+		//Get milliseconds chart
+		const chart = charts.ms;
+
+		//Create axis
+		var packetsAxis = chart.yAxes.push (new am4charts.ValueAxis ());
+		packetsAxis.renderer.labels.template.fill = am4core.color("#040303ff");
+		packetsAxis.numberFormatter = new am4core.NumberFormatter ();
+		packetsAxis.numberFormatter.numberFormat = "#'pkts'";
+		packetsAxis.renderer.labels.template.fill = am4core.color ("#040303ff");
+		packetsAxis.renderer.maxWidth = packetsAxis.renderer.minWidth = 120;
+		packetsAxis.renderer.opposite = true;
+		packetsAxis.renderer.grid.template.strokeOpacity = 0.07;
+		packetsAxis.tooltip.disabled = true;
+		packetsAxis.min = packetsAxis.minDefined = 0;
+		
+
+		function createPacketsSeries(name,field,colorValue)
+		{
+			//create color
+			const color = am4core.color(colorValue || colorHash.hex ("medooze"+name));
+			//Create serie
+			var serie = chart.series.push (new am4charts.LineSeries ());
+			serie.name = name;
+			serie.dataFields.dateX = Metadata.ts;
+			serie.dataFields.valueY = field;
+			serie.yAxis = packetsAxis;
+			serie.tooltipText = "{name}: {valueY}";
+			serie.fill = color;
+			serie.stroke = color;
+			serie.startLocation = 0;
+			serie.connect = false;
+			serie.autoGapCount = 100;
+			//Done
+			return serie;
+		}
+		
+		createPacketsSeries("Packets"	, Metadata.packetRate		, "#040303ff");
+	}
+
 
 	if (hasExtraFields)
 	{
@@ -739,7 +999,7 @@ function DisplayData (name,csv)
 			createBpsSeries("layerBitrate", Metadata.layerBitrate, colors[i++]);
 			createBpsSeries("layerTargetBitrate", Metadata.layerTargetBitrate, colors[i++]);
 			createBpsSeries("encodingGuessBitrate", Metadata.encodingBestGuessBitrate, colors[i++]);
-			
+			createBpsSeries("layerAvailable", Metadata.layerAvailable, colors[i++]);
 		}
 
 		//Create track/layer names series and axis
@@ -757,7 +1017,22 @@ function DisplayData (name,csv)
 			layerAxis.renderer.grid.template.strokeOpacity = 0.07;
 			layerAxis.tooltip.disabled = true;
 			layerAxis.min = layerAxis.minDefined = 0;
-			layerAxis.max = layerAxis.maxDefined = 6;
+			layerAxis.max = layerAxis.maxDefined = MetadataEventType.FLUSH;
+
+			// ideally we will also change the tooltip text but not sure yet how to do this mapping as some kind of custom function instead of using tooltipText
+			layerAxis.renderer.labels.template.adapter.add("text", (label, target, key) => {
+				if (target.dataItem)
+				{
+					const v = target.dataItem.values.value.value;
+					if (v === MetadataEventType.FEEDBACK)              return '[#040303ff] Feedback(0)';
+					else if (v === MetadataEventType.LAYER)            return '[#040303ff] Layer(1)';
+					else if (v === MetadataEventType.BLOCKED_FEEDBACK) return '[#040303ff] Blocked(2)';
+					else if (v === MetadataEventType.NONTWCC)          return '[#040303ff] NonTWCC(3)';
+					else if (v === MetadataEventType.FLUSH)            return '[#040303ff] Flush(4)';
+				}
+				return label;
+			});
+
 
 			function createLayersSeries(name,valueField,colorValue,nameField)
 			{
@@ -783,6 +1058,9 @@ function DisplayData (name,csv)
 			createLayersSeries("trackId"		, Metadata.trackNumber, colors[i++], Metadata.trackId);
 			createLayersSeries("encodingId"		, Metadata.encodingNumber, colors[i++],  Metadata.encodingId);
 			createLayersSeries("smoothTransition"		, Metadata.switchedFromSmooth, colors[i++],  Metadata.smoothTransition);
+			createLayersSeries("eventType"		, Metadata.eventType, "#040303ff",  Metadata.eventType);
+			createLayersSeries("sequence"		, Metadata.seqPoint, colors[i++],  Metadata.transportSeqNum);
+			createLayersSeries("feedback"		, Metadata.seqPoint, colors[i++],  Metadata.feedbackNum);
 		}
 
 	}
