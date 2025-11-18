@@ -71,11 +71,13 @@ const Metadata = {
 	encodingId		: 22,
 	layerBitrate	: 23, // encodingBitrate (TODO C++ different name)
 	layerTargetBitrate	: 24,
-	encodingBestGuessBitrate: 25,
+	layerAverageBitrate: 25,
 	switchedFromSmooth: 26,
 	time: 27,
 	eventType: 28,
-	csvDataItems: 29,
+	layerBurstBitrate: 29,
+	layerBurstSize: 30,
+	csvDataItems: 31,
 
 	lost			: "lost",
 	delay			: "delay",
@@ -108,7 +110,8 @@ const Metadata = {
 	probingAverageRampDuration		: "probingAverageRampDuration", // Commented out but works (larger scale)
 	probingAverageBackoffMaxDuration		: "probingAverageBackoffMaxDuration", // Commented out but works (larger scale)
 	probingBurstRampKeyframes		: "probingBurstRampKeyframes", // Done
-	probingBitrateLimit		: "probingBitrateLimit", // Done
+	probingAverageBitrateLimit		: "probingAverageBitrateLimit", // Done
+	probingBurstBitrateLimit		: "probingBurstBitrateLimit", // Done
 	probingAverageRampStartTime		: "probingAverageRampStartTime", // Wont include for now. Maybe calc backoff etc from it
 	probingBurstRampKeyframesCount		: "probingBurstRampKeyframesCount", // Done
 	probingRampAttempts		: "probingRampAttempts", // Done
@@ -123,7 +126,8 @@ ProbeMapping[Metadata.size] = Metadata.probingBurstSize;
 ProbeMapping[Metadata.deltaInstant] = Metadata.probingAverageRampDuration;
 ProbeMapping[Metadata.deltaAcumulated] = Metadata.probingAverageBackoffMaxDuration;
 ProbeMapping[Metadata.rtt] = Metadata.probingBurstRampKeyframes;
-ProbeMapping[Metadata.availableBitrate] = Metadata.probingBitrateLimit;
+ProbeMapping[Metadata.availableBitrate] = Metadata.probingAverageBitrateLimit;
+ProbeMapping[Metadata.targetBitrate] = Metadata.probingBurstBitrateLimit;
 ProbeMapping[Metadata.sent] = Metadata.probingAverageRampStartTime;
 ProbeMapping[Metadata.estimatedrtt] = Metadata.probingBurstRampKeyframesCount;
 ProbeMapping[Metadata.feedbackNum] = Metadata.probingRampAttempts;
@@ -506,8 +510,11 @@ function Process (csv)
 			//encodingId
 			//layerBitrate
 			//layerTargetBitrate
-			//encodingBestGuessBitrate
+			//layerAverageBitrate
 			//switchedFromSmooth
+			//layerBurstBitrate
+			//layerBurstSize
+
 
 			point[Metadata.lost]           = data[lastPoint][Metadata.lost];
 			point[Metadata.delay]          = data[lastPoint][Metadata.delay];
@@ -554,8 +561,11 @@ function Process (csv)
 		point[Metadata.encodingId] = data[lastLayerEvent][Metadata.encodingId];
 		point[Metadata.layerBitrate] = data[lastLayerEvent][Metadata.layerBitrate];
 		point[Metadata.layerTargetBitrate] = data[lastLayerEvent][Metadata.layerTargetBitrate];
-		point[Metadata.encodingBestGuessBitrate] = data[lastLayerEvent][Metadata.encodingBestGuessBitrate];
+		point[Metadata.layerAverageBitrate] = data[lastLayerEvent][Metadata.layerAverageBitrate];
 		point[Metadata.switchedFromSmooth] = data[lastLayerEvent][Metadata.switchedFromSmooth];
+		point[Metadata.layerBurstBitrate] = data[lastLayerEvent][Metadata.layerBurstBitrate];
+		point[Metadata.layerBurstSize] = data[lastLayerEvent][Metadata.layerBurstSize];
+
 
 		point[Metadata.trackNumber] = data[lastLayerEvent][Metadata.trackNumber];
 		point[Metadata.encodingNumber] = data[lastLayerEvent][Metadata.encodingNumber];
@@ -895,7 +905,8 @@ function DisplayData (name,csv)
 		
 		createBitrateSerie("ProbeTargetAvg"		, Metadata.probingAverageBitrate		, colors[i++]);
 		createBitrateSerie("ProbeTargetBurst"		, Metadata.probingBurstBitrate		, colors[i++]);
-		createBitrateSerie("ProbeLimit"		, Metadata.probingBitrateLimit		, colors[i++]);
+		createBitrateSerie("ProbeAvgLimit"		, Metadata.probingAverageBitrateLimit		, colors[i++]);
+		createBitrateSerie("ProbeBurstLimit"		, Metadata.probingBurstBitrateLimit		, colors[i++]);
 	}
 
 	//Create state series an axis
@@ -1093,6 +1104,8 @@ function DisplayData (name,csv)
 		createPacketsSeries("Probe Key Ramp", Metadata.probingBurstRampKeyframes, "#040303ff");
 		createPacketsSeries("Probe Key Count", Metadata.probingBurstRampKeyframesCount, "#040303ff");
 		createPacketsSeries("Probe Attempts", Metadata.probingRampAttempts, "#040303ff");
+		createPacketsSeries("layerBurstSize", Metadata.layerBurstSize, "#040303ff");
+		
 	}
 
 
@@ -1136,7 +1149,8 @@ function DisplayData (name,csv)
 			
 			createBpsSeries("layerBitrate", Metadata.layerBitrate, colors[i++]);
 			createBpsSeries("layerTargetBitrate", Metadata.layerTargetBitrate, colors[i++]);
-			createBpsSeries("encodingGuessBitrate", Metadata.encodingBestGuessBitrate, colors[i++]);
+			createBpsSeries("layerAverageBitrate", Metadata.layerAverageBitrate, colors[i++]);
+			createBpsSeries("layerBurstBitrate", Metadata.layerBurstBitrate, colors[i++]);
 			createBpsSeries("layerAvailable", Metadata.layerAvailable, colors[i++]);
 		}
 
