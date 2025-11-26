@@ -96,7 +96,7 @@ const Metadata = {
 	encodingNumber     : "encodingNumber",
 	smoothTransition     : "smoothTransition",
 	seqPoint     : "seqPoint",
-	layerAvailable: "layerAvailable",
+	linkEstimatedBitrate: "linkEstimatedBitrate",
 	packetRate: "packetRate",
 	estimatedHeaderOverhead: "estimatedHeaderOverhead",
 	bitrateSentOverhead		: "bitrateSentOverhead",
@@ -414,6 +414,7 @@ function Process (csv)
 		}
 
 		lastPoint = point;
+
 		data.push (point);
 		count ++;
 	}
@@ -574,7 +575,7 @@ function Process (csv)
 		// Assign the available bitrate calculated at the time this layer switched as the 
 		// layer available bitrate since it isnt in the data directly we need to assing a 
 		// calculated value here
-		point[Metadata.layerAvailable] = data[lastLayerEvent][Metadata.availableBitrate];
+		point[Metadata.linkEstimatedBitrate] = data[lastLayerEvent][Metadata.estimatedBitrate];
 
 		for (const key in ProbeMapping)
 		{
@@ -1105,6 +1106,8 @@ function DisplayData (name,csv)
 		createPacketsSeries("Probe Key Count", Metadata.probingBurstRampKeyframesCount, "#040303ff");
 		createPacketsSeries("Probe Attempts", Metadata.probingRampAttempts, "#040303ff");
 		createPacketsSeries("layerBurstSize", Metadata.layerBurstSize, "#040303ff");
+		createPacketsSeries("probingBurstSize", Metadata.probingBurstSize, "#673737ff");
+		
 		
 	}
 
@@ -1151,7 +1154,7 @@ function DisplayData (name,csv)
 			createBpsSeries("layerTargetBitrate", Metadata.layerTargetBitrate, colors[i++]);
 			createBpsSeries("layerAverageBitrate", Metadata.layerAverageBitrate, colors[i++]);
 			createBpsSeries("layerBurstBitrate", Metadata.layerBurstBitrate, colors[i++]);
-			createBpsSeries("layerAvailable", Metadata.layerAvailable, colors[i++]);
+			createBpsSeries("linkEstimatedBitrate", Metadata.linkEstimatedBitrate, colors[i++]);
 		}
 
 		//Create track/layer names series and axis
