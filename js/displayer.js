@@ -41,6 +41,11 @@ const MetadataEventType = {
 	BLOCKED_FEEDBACK: 2,
 	NONTWCC: 3,
 	FLUSH: 4,
+	PROBE: 5,
+	MAX: 5,
+
+	// Lets not display these types for now as it makes the axis too busy
+	PACING: 6,
 };
 
 const Metadata = {
@@ -69,16 +74,20 @@ const Metadata = {
 	encodingId		: 22,
 	layerBitrate	: 23, // encodingBitrate (TODO C++ different name)
 	layerTargetBitrate	: 24,
-	encodingBestGuessBitrate: 25,
+	layerAverageBitrate: 25,
 	switchedFromSmooth: 26,
 	time: 27,
 	eventType: 28,
-	csvDataItems: 29,
+	layerBurstAverageBitrate: 29,
+	layerBurstMaxBitrate: 30,
+	queued: 31,
+	csvDataItems: 32,
 
 	lost			: "lost",
 	delay			: "delay",
 
 	bitrateSent		: "bitrateSent",
+	bitrateQueued		: "bitrateQueued",
 	bitrateSentLong		: "bitrateSentLong",
 	bitrateRecv		: "bitrateReceived",
 	bitrateRecvLong		: "bitrateReceivedLong",
@@ -92,28 +101,90 @@ const Metadata = {
 	encodingNumber     : "encodingNumber",
 	smoothTransition     : "smoothTransition",
 	seqPoint     : "seqPoint",
-	layerAvailable: "layerAvailable",
+	linkEstimatedBitrate: "linkEstimatedBitrate",
 	packetRate: "packetRate",
 	estimatedHeaderOverhead: "estimatedHeaderOverhead",
 	bitrateSentOverhead		: "bitrateSentOverhead",
+	bitrateRecvOverhead		: "bitrateRecvOverhead",
+	bitrateRecvLongOverhead		: "bitrateRecvLongOverhead",
+
+	probingEncodingId		: "probingEncodingId", // Tricky want common ID mapping for this and layer selection
+	probingAverageBitrate		: "probingAverageBitrate", // DONE
+	probingBurstBitrate		: "probingBurstBitrate", // DONE
+	probingKeyframes		: "probingKeyframes", // Wont include for now not decent graph for it
+	probingAverageRampDuration		: "probingAverageRampDuration", // Commented out but works (larger scale)
+	probingAverageBackoffMaxDuration		: "probingAverageBackoffMaxDuration", // Commented out but works (larger scale)
+	probingBurstRampKeyframes		: "probingBurstRampKeyframes", // Done
+	probingAverageBitrateLimit		: "probingAverageBitrateLimit", // Done
+	probingBurstBitrateLimit		: "probingBurstBitrateLimit", // Done
+	probingAverageRampStartTime		: "probingAverageRampStartTime", // Wont include for now. Maybe calc backoff etc from it
+	probingBurstRampKeyframesCount		: "probingBurstRampKeyframesCount", // Done
+	probingRampAttempts		: "probingRampAttempts", // Done
+	probingPauseAboveEstimatedBitrate : "probingPauseAboveEstimatedBitrate",
+
+	pacingLimit		: "pacingLimit",
+	pacingDelay		: "pacingDelay",
+	pacingMaxDelay		: "pacingMaxDelay",
 };
 const data = [];
 
-const MonitorDuration = 200000;
+const ProbeMapping = {};
+ProbeMapping[Metadata.encodingId] = Metadata.probingEncodingId;
+ProbeMapping[Metadata.layerBitrate] = Metadata.probingAverageBitrate;
+ProbeMapping[Metadata.layerTargetBitrate] = Metadata.probingBurstBitrate;
+ProbeMapping[Metadata.size] = Metadata.probingKeyframes;
+ProbeMapping[Metadata.deltaInstant] = Metadata.probingAverageRampDuration;
+ProbeMapping[Metadata.deltaAcumulated] = Metadata.probingAverageBackoffMaxDuration;
+ProbeMapping[Metadata.rtt] = Metadata.probingBurstRampKeyframes;
+ProbeMapping[Metadata.availableBitrate] = Metadata.probingAverageBitrateLimit;
+ProbeMapping[Metadata.targetBitrate] = Metadata.probingBurstBitrateLimit;
+ProbeMapping[Metadata.sent] = Metadata.probingAverageRampStartTime;
+ProbeMapping[Metadata.estimatedrtt] = Metadata.probingBurstRampKeyframesCount;
+ProbeMapping[Metadata.feedbackNum] = Metadata.probingRampAttempts;
+ProbeMapping[Metadata.estimatedBitrate] = Metadata.probingPauseAboveEstimatedBitrate;
+const ProbeMappingInverse = {};
+for (const key in ProbeMapping)
+{
+	const probeKey = ProbeMapping[key];
+	ProbeMappingInverse[probeKey] = key;
+}
+ProbeMappingInverse[Metadata.ts] = Metadata.ts;
+
+
+const PacingMapping = {};
+PacingMapping[Metadata.layerTargetBitrate] = Metadata.pacingLimit;
+PacingMapping[Metadata.accumulatedDelta] = Metadata.pacingMaxDelay;
+const PacingMappingInverse = {};
+for (const key in PacingMapping)
+{
+	const probeKey = PacingMapping[key];
+	PacingMappingInverse[probeKey] = key;
+}
+PacingMappingInverse[Metadata.ts] = Metadata.ts;
+
+
+// In C++ kMonitorDuration this is 150ms
+const MonitorDuration = 150000;
+const IP4_HEADER = 20;
+const UDP_HEADER = 8;
+
 // Convert CSV file to array of data points, adding the neccesary info
 function Process (csv)
 {
 	const packetsSent	= new Accumulator (MonitorDuration);
 	const packetsLost	= new Accumulator (MonitorDuration);
 	const bitrateSent	= new Accumulator (MonitorDuration);
+	const bitrateQueued	= new Accumulator (MonitorDuration);
 	const bitrateSentLong	= new Accumulator (5000000);
 	const bitrateRecv	= new Accumulator (MonitorDuration);
 	const bitrateRecvLong	= new Accumulator (5000000);
+	const bitrateRecvLongOverhead	= new Accumulator (5000000);
 	const bitrateMedia	= new Accumulator (MonitorDuration);
 	const bitrateRTX	= new Accumulator (MonitorDuration);
 	const bitrateProbing	= new Accumulator (MonitorDuration);
 	const bitrateNonTWCC	= new Accumulator (MonitorDuration);
 	const packetRate	= new Accumulator (MonitorDuration);
+	const pacedDelay	= new Accumulator (MonitorDuration);
 	
 	let lost = 0;
 	let minRTT = 0;
@@ -146,6 +217,11 @@ function Process (csv)
 		point.length = Metadata.csvDataItems;
 		point.fill(undefined, originalLength);
 
+		if (point[Metadata.queued] === undefined)
+		{
+			point[Metadata.queued] = point[Metadata.sent];
+		}
+
 		if (point[Metadata.eventType] === MetadataEventType.FEEDBACK)
 		{
 			// Old version used sent time, new version has a field for the time
@@ -173,6 +249,82 @@ function Process (csv)
 	// Now use accumulators to process the data in order and generate windowed/processed data
 	for (const point of unsorted)
 	{
+		// Need to re-write the keys of the probe points
+		if (point[Metadata.eventType] === MetadataEventType.PROBE)
+		{
+			const logProbe = {};
+
+			// First move all the probe mapping keys to proper names
+			for (const csvKey in ProbeMapping)
+			{
+				const probeKey = ProbeMapping[csvKey];
+
+				// Copy across the value
+				point[probeKey] = point[csvKey];
+				logProbe[probeKey] = point[csvKey];
+
+				// Clear the original key (copy previous value reported into it)
+				point[csvKey] = lastPoint !== null ? lastPoint[csvKey] : 0;
+			}
+
+			for (const key in Metadata)
+			{
+
+				// lets also do the copy for all other keys that arent in the probe mapping
+				if (!(key in ProbeMappingInverse))
+				{
+					const newValue = lastPoint !== null ? lastPoint[key] : 0;
+					point[key] = newValue;
+				}
+			}
+		}
+		else
+		{
+			for (const key in ProbeMapping)
+			{
+				const probeKey = ProbeMapping[key];
+				point[probeKey] = lastPoint !== null ? lastPoint[probeKey] : 0;
+			}
+		}
+
+		if (point[Metadata.eventType] === MetadataEventType.PACING)
+		{
+			const logPacing = {};
+
+			// First move all the probe mapping keys to proper names
+			for (const csvKey in PacingMapping)
+			{
+				const pacingKey = PacingMapping[csvKey];
+
+				// Copy across the value
+				point[pacingKey] = point[csvKey];
+				logPacing[pacingKey] = point[csvKey];
+
+				// Clear the original key (copy previous value reported into it)
+				point[csvKey] = lastPoint !== null ? lastPoint[csvKey] : 0;
+			}
+
+			for (const key in Metadata)
+			{
+
+				// lets also do the copy for all other keys that arent in the probe mapping
+				if (!(key in PacingMappingInverse))
+				{
+					const newValue = lastPoint !== null ? lastPoint[key] : 0;
+					point[key] = newValue;
+				}
+			}
+
+		}
+		else
+		{
+			for (const key in PacingMapping)
+			{
+				const pacingKey = PacingMapping[key];
+				point[pacingKey] = lastPoint !== null ? lastPoint[pacingKey] : 0;
+			}
+		}
+
 		// We want to update accumulators for normal data events (FEEDBACK/FLUSH)
 		if (point[Metadata.eventType] === MetadataEventType.FEEDBACK || point[Metadata.eventType] === MetadataEventType.FLUSH)
 		{
@@ -198,8 +350,10 @@ function Process (csv)
 				point[Metadata.bitrateRecvLong] = bitrateRecvLong.accumulate (point[Metadata.recv], point[Metadata.size] * 8);
 			}
 			point[Metadata.lost] = 100 * packetsLost.getAccumulated () / packetsSent.getAccumulated ();
+			point[Metadata.pacingDelay] = (point[Metadata.sent] - point[Metadata.queued]) /1000;
 
 			//Add sent bitrate
+			point[Metadata.bitrateQueued]	= bitrateQueued.accumulate (point[Metadata.queued], point[Metadata.size] * 8);
 			point[Metadata.bitrateSent]	= bitrateSent.accumulate (point[Metadata.sent], point[Metadata.size] * 8);
 			point[Metadata.bitrateSentLong]	= bitrateSentLong.accumulate (point[Metadata.sent], point[Metadata.size] * 8);
 			point[Metadata.bitrateMedia]	= bitrateMedia.accumulate (point[Metadata.sent], !point[Metadata.rtx] && !point[Metadata.probing] ? point[Metadata.size] * 8 : 0);
@@ -207,11 +361,19 @@ function Process (csv)
 			point[Metadata.bitrateProbing]	= bitrateProbing.accumulate (point[Metadata.sent], point[Metadata.probing] ? point[Metadata.size] * 8 : 0);
 			point[Metadata.bitrateNonTWCC] = bitrateNonTWCC.accumulate (point[Metadata.sent], 0);
 
-			const IP4_HEADER = 20;
-			const UDP_HEADER = 8;
 			point[Metadata.packetRate] = packetRate.accumulate (point[Metadata.sent], 1);
 			point[Metadata.estimatedHeaderOverhead] = point[Metadata.packetRate] * 8 * IP4_HEADER * UDP_HEADER;
 			point[Metadata.bitrateSentOverhead] = point[Metadata.estimatedHeaderOverhead] + point[Metadata.bitrateSent]
+			point[Metadata.bitrateRecvOverhead] = point[Metadata.estimatedHeaderOverhead] + point[Metadata.bitrateRecv]
+
+			if (point[Metadata.sent] && !point[Metadata.recv])
+			{
+				point[Metadata.bitrateRecvLongOverhead] = bitrateRecvLongOverhead.accumulate (point[Metadata.recv], 0);
+			}
+			else
+			{
+				point[Metadata.bitrateRecvLongOverhead] = bitrateRecvLongOverhead.accumulate(point[Metadata.recv], (point[Metadata.size] * 8) + (IP4_HEADER + UDP_HEADER) * 8);
+			}
 
 
 			//If there has been a discontinuity on feedback pacekts
@@ -264,16 +426,33 @@ function Process (csv)
 			if (point[Metadata.eventType] === MetadataEventType.NONTWCC)
 			{
 				point[Metadata.bitrateNonTWCC] = bitrateNonTWCC.accumulate (point[Metadata.sent], point[Metadata.size] * 8);
+
+				// Lets assume the loss of NONTWCC is roughly the same as loss of other media packets
+				// I.e We dont have feedback so we will guess what was actually recvd.
+				const rnd = Math.random();
+				const currentLoss = packetsLost.getAccumulated() / packetsSent.getAccumulated();
+				if (rnd < currentLoss)
+				{
+					point[Metadata.bitrateRecvLongOverhead] = bitrateRecvLongOverhead.accumulate(point[Metadata.recv], 0);
+				}
+				else
+				{
+					// @todo We are adding this using sent time as we dont have a recv time. But it will be offset compared to other packets. Hopefully not an issue
+					point[Metadata.bitrateRecvLongOverhead] = bitrateRecvLongOverhead.accumulate(point[Metadata.sent], (point[Metadata.size] * 8) + (IP4_HEADER + UDP_HEADER) * 8);
+				}
 			}
 			else
 			{
+				// @todo I think this needs to just copy as well
 				point[Metadata.bitrateNonTWCC] = bitrateNonTWCC.accumulate (point[Metadata.sent], 0);
+				point[Metadata.bitrateRecvLongOverhead] = lastPoint !== null ? lastPoint[Metadata.bitrateRecvLongOverhead] : 0;
 			}
 
 			// In this case all we care about is the layer change data, we will duplicate all the other data from previous point
 			point[Metadata.bitrateRecv]    = lastPoint !== null ? lastPoint[Metadata.bitrateRecv] : 0;
 			point[Metadata.bitrateRecvLong]    = lastPoint !== null ? lastPoint[Metadata.bitrateRecvLong] : 0;
 			point[Metadata.lost]           = lastPoint !== null ? lastPoint[Metadata.lost] : 0;
+			point[Metadata.bitrateQueued]    = lastPoint !== null ? lastPoint[Metadata.bitrateQueued] : 0;
 			point[Metadata.bitrateSent]    = lastPoint !== null ? lastPoint[Metadata.bitrateSent] : 0;
 			point[Metadata.bitrateSentLong]    = lastPoint !== null ? lastPoint[Metadata.bitrateSentLong] : 0;
 			point[Metadata.bitrateMedia]   = lastPoint !== null ? lastPoint[Metadata.bitrateMedia] : 0;
@@ -286,6 +465,8 @@ function Process (csv)
 			point[Metadata.packetRate]    = lastPoint !== null ? lastPoint[Metadata.packetRate] : 0;
 			point[Metadata.estimatedHeaderOverhead]    = lastPoint !== null ? lastPoint[Metadata.estimatedHeaderOverhead] : 0;
 			point[Metadata.bitrateSentOverhead]= lastPoint !== null ? lastPoint[Metadata.bitrateSentOverhead] : 0;
+			point[Metadata.bitrateRecvOverhead]= lastPoint !== null ? lastPoint[Metadata.bitrateRecvOverhead] : 0;
+			//point[Metadata.bitrateRecvLongOverhead] = lastPoint !== null ? lastPoint[Metadata.bitrateRecvLongOverhead] : 0;
 		}
 
 		if (Metadata.trackId in point)
@@ -303,8 +484,8 @@ function Process (csv)
 			layerMaxTargetBitrate.set(point[Metadata.encodingId], currentMaxBitrate ? Math.max(currentMaxBitrate, layerTargetBitrate) : layerTargetBitrate);
 		}
 
-
 		lastPoint = point;
+
 		data.push (point);
 		count ++;
 	}
@@ -360,18 +541,27 @@ function Process (csv)
 	//
 	// Because we export layer events when they haappen, we will just copy that data across.
 	let lastLayerEvent = 0;
+	let lastProbeEvent = 0;
 	lastPoint = 0;
 	let i = 0;
 	for (const point of data)
 	{
 		if (point[Metadata.eventType] !== MetadataEventType.FEEDBACK && point[Metadata.eventType] !== MetadataEventType.FLUSH)
 		{
-			lastLayerEvent = i;
+			if (point[Metadata.eventType] !== MetadataEventType.PROBE)
+			{
+				lastProbeEvent = i;
+			}
+			else
+			{
+				lastLayerEvent = i;
+			}
 
 			point[Metadata.fb]    = data[lastPoint][Metadata.fb];
 			point[Metadata.transportSeqNum]    = data[lastPoint][Metadata.transportSeqNum];
 			point[Metadata.feedbackNum]    = data[lastPoint][Metadata.feedbackNum];
 			point[Metadata.size]    = data[lastPoint][Metadata.size];
+			point[Metadata.queued]    = data[lastPoint][Metadata.queued];
 			point[Metadata.sent]    = data[lastPoint][Metadata.sent];
 			point[Metadata.recv]    = data[lastPoint][Metadata.recv];
 			point[Metadata.deltaSent]    = data[lastPoint][Metadata.deltaSent];
@@ -393,11 +583,15 @@ function Process (csv)
 			//encodingId
 			//layerBitrate
 			//layerTargetBitrate
-			//encodingBestGuessBitrate
+			//layerAverageBitrate
 			//switchedFromSmooth
+			//layerBurstAverageBitrate
+			//layerBurstMaxBitrate
+
 
 			point[Metadata.lost]           = data[lastPoint][Metadata.lost];
 			point[Metadata.delay]          = data[lastPoint][Metadata.delay];
+			point[Metadata.bitrateQueued]    = data[lastPoint][Metadata.bitrateQueued];
 			point[Metadata.bitrateSent]    = data[lastPoint][Metadata.bitrateSent];
 			point[Metadata.bitrateSentLong]    = data[lastPoint][Metadata.bitrateSentLong];
 			point[Metadata.bitrateRecv]    = data[lastPoint][Metadata.bitrateRecv];
@@ -413,6 +607,8 @@ function Process (csv)
 			point[Metadata.packetRate] = data[lastPoint][Metadata.packetRate];
 			point[Metadata.estimatedHeaderOverhead] = data[lastPoint][Metadata.estimatedHeaderOverhead];
 			point[Metadata.bitrateSentOverhead] = data[lastPoint][Metadata.bitrateSentOverhead];
+			point[Metadata.bitrateRecvOverhead] = data[lastPoint][Metadata.bitrateRecvOverhead];
+			point[Metadata.bitrateRecvLongOverhead] = data[lastPoint][Metadata.bitrateRecvLongOverhead];
 			
 			// The NON-TWCC is now very noisy for all audio packets now.
 			//
@@ -424,6 +620,10 @@ function Process (csv)
 			{
 				point[Metadata.eventType] = MetadataEventType.FEEDBACK;
 			}
+			//else if (point[Metadata.eventType] === MetadataEventType.PROBE)
+			//{
+			//	point[Metadata.eventType] = MetadataEventType.FEEDBACK;
+			//}
 		}
 		else
 		{
@@ -435,8 +635,11 @@ function Process (csv)
 		point[Metadata.encodingId] = data[lastLayerEvent][Metadata.encodingId];
 		point[Metadata.layerBitrate] = data[lastLayerEvent][Metadata.layerBitrate];
 		point[Metadata.layerTargetBitrate] = data[lastLayerEvent][Metadata.layerTargetBitrate];
-		point[Metadata.encodingBestGuessBitrate] = data[lastLayerEvent][Metadata.encodingBestGuessBitrate];
+		point[Metadata.layerAverageBitrate] = data[lastLayerEvent][Metadata.layerAverageBitrate];
 		point[Metadata.switchedFromSmooth] = data[lastLayerEvent][Metadata.switchedFromSmooth];
+		point[Metadata.layerBurstAverageBitrate] = data[lastLayerEvent][Metadata.layerBurstAverageBitrate];
+		point[Metadata.layerBurstMaxBitrate] = data[lastLayerEvent][Metadata.layerBurstMaxBitrate];
+
 
 		point[Metadata.trackNumber] = data[lastLayerEvent][Metadata.trackNumber];
 		point[Metadata.encodingNumber] = data[lastLayerEvent][Metadata.encodingNumber];
@@ -445,7 +648,20 @@ function Process (csv)
 		// Assign the available bitrate calculated at the time this layer switched as the 
 		// layer available bitrate since it isnt in the data directly we need to assing a 
 		// calculated value here
-		point[Metadata.layerAvailable] = data[lastLayerEvent][Metadata.availableBitrate];
+		point[Metadata.linkEstimatedBitrate] = data[lastLayerEvent][Metadata.estimatedBitrate];
+
+		for (const key in ProbeMapping)
+		{
+			const probeKey = ProbeMapping[key];
+			point[probeKey] = data[lastProbeEvent][probeKey];
+		}
+
+		for (const key in PacingMapping)
+		{
+			const pacingKey = PacingMapping[key];
+			point[pacingKey] = data[lastProbeEvent][pacingKey];
+		}
+		
 		i++;
 	}
 
@@ -467,8 +683,10 @@ function DisplayData (name,csv)
 	
 	let hasExtraFields = data.length > 0 && Metadata.trackNumber in data[0];
 
+	// @todo Should we do a mean/max depending on field for preview?
+	// Rignt now just takes one point every second
 	for (const point of data)
-		if (!preview.length || point[Metadata.sent]-preview[preview.length-1][Metadata.sent]>1000000)
+		if (!preview.length || point[Metadata.queued]-preview[preview.length-1][Metadata.queued]>1000000)
 			preview.push(point);
 	
 	//Get number of chunks
@@ -477,6 +695,10 @@ function DisplayData (name,csv)
 
 	if (chunks > 1)
 	{
+		const div = document.createElement("div");
+		div.innerText = "Selected: Preview";
+		document.body.appendChild(div);
+
 		//Create preview span
 		{
 			//Create span
@@ -489,6 +711,7 @@ function DisplayData (name,csv)
 			{
 				for (const chart of Object.values(charts))
 					chart.data = preview;
+				div.innerText = "Selected: Preview";
 			};
 
 			//Add to body
@@ -508,6 +731,7 @@ function DisplayData (name,csv)
 				const slice = data.slice(linesPerChunk * i, linesPerChunk * (i + 1));;
 				for (const chart of Object.values(charts))
 					chart.data = slice;
+				div.innerText = "Selected: Chunk #" + i;
 			};
 
 			//Add to body
@@ -591,17 +815,17 @@ function DisplayData (name,csv)
 		//Create cursor
 		chart.cursor = new am4charts.XYCursor ();
 		//Create x axis
-		const sentAxis = chart.xAxes.push (new am4charts.DateAxis ());
-		sentAxis.renderer.grid.template.location = 0;
-		sentAxis.renderer.labels.template.fill = am4core.color (colorHash.hex ("sentAxis"));
-		sentAxis.renderer.grid.template.strokeOpacity = 0.01;
-		sentAxis.dateFormats.setKey("millisecond", "mm:ss.nnn");
-		sentAxis.periodChangeDateFormats.setKey("millisecond", "mm:ss.nnn");
-		sentAxis.tooltipText = "{dateX}";
-		sentAxis.baseDuration = 10; 
+		const queuedAxis = chart.xAxes.push (new am4charts.DateAxis ());
+		queuedAxis.renderer.grid.template.location = 0;
+		queuedAxis.renderer.labels.template.fill = am4core.color (colorHash.hex ("queuedAxis"));
+		queuedAxis.renderer.grid.template.strokeOpacity = 0.01;
+		queuedAxis.dateFormats.setKey("millisecond", "mm:ss.nnn");
+		queuedAxis.periodChangeDateFormats.setKey("millisecond", "mm:ss.nnn");
+		queuedAxis.tooltipText = "{dateX}";
+		queuedAxis.baseDuration = 10; 
 		
 		//When doing selection
-		sentAxis.events.on("selectionextremeschanged", function (event) {
+		queuedAxis.events.on("selectionextremeschanged", function (event) {
 			console.log("selectionextremeschanged");
 			//If we are disabled
 			if (!chart.cursor.interactionsEnabled)
@@ -681,7 +905,7 @@ function DisplayData (name,csv)
 		for (let i=0;chunks>1 & i<chunks;++i)
 		{
 			// axis ranges
-			var range = sentAxis.axisRanges.create();
+			var range = queuedAxis.axisRanges.create();
 			range.date = data[i*linesPerChunk][Metadata.ts];
 			range.endDate = data[Math.min((i+1)*linesPerChunk,data.length)-1][Metadata.ts];
 			range.axisFill.fill = chart.colors.getIndex(i);
@@ -735,7 +959,7 @@ function DisplayData (name,csv)
 			serie.dataFields.dateX = Metadata.ts;
 			serie.dataFields.valueY = field;
 			serie.yAxis = mbpsAxis;
-			//bweSeries.xAxis = sentAxis;
+			//bweSeries.xAxis = queuedAxis;
 			serie.tooltipText = "{name}: {valueY.formatNumber(\"#.###a'bps'\")}";
 			serie.fill = color;
 			serie.stroke = color;
@@ -752,12 +976,15 @@ function DisplayData (name,csv)
 		createBitrateSerie("Available"	, Metadata.availableBitrate		, colors[i++]);
 		createBitrateSerie("Target"		, Metadata.targetBitrate		, colors[i++]);
 		
+		createBitrateSerie("Queued"		, Metadata.bitrateQueued		, colors[i++]);
 		createBitrateSerie("Sent"		, Metadata.bitrateSent		, colors[i++]);
 		createBitrateSerie("Long Sent"		, Metadata.bitrateSentLong		, colors[i++]);
 		createBitrateSerie("Sent+Overhead"		, Metadata.bitrateSentOverhead		, colors[i++]);
 		
 		createBitrateSerie("Received"	, Metadata.bitrateRecv		, colors[i++]);
 		createBitrateSerie("Long Received"	, Metadata.bitrateRecvLong		, colors[i++]);
+		createBitrateSerie("Received+Overhead"		, Metadata.bitrateRecvOverhead		, colors[i++]);
+		createBitrateSerie("Long Received+Overhead"		, Metadata.bitrateRecvLongOverhead		, colors[i++]);
 
 		createBitrateSerie("Media"		, Metadata.bitrateMedia		, colors[i++]);
 		createBitrateSerie("RTX"		, Metadata.bitrateRTX		, colors[i++]);
@@ -765,6 +992,14 @@ function DisplayData (name,csv)
 		createBitrateSerie("NonTWCC"		, Metadata.bitrateNonTWCC	, colors[i++]);
 		createBitrateSerie("Overhead"		, Metadata.estimatedHeaderOverhead		, colors[i++]);
 		
+		createBitrateSerie("ProbeTargetAvg"		, Metadata.probingAverageBitrate		, colors[i++]);
+		createBitrateSerie("ProbeTargetBurst"		, Metadata.probingBurstBitrate		, colors[i++]);
+		createBitrateSerie("ProbeAvgLimit"		, Metadata.probingAverageBitrateLimit		, colors[i++]);
+		createBitrateSerie("ProbeBurstLimit"		, Metadata.probingBurstBitrateLimit		, colors[i++]);
+		createBitrateSerie("ProbePauseLimit"		, Metadata.probingPauseAboveEstimatedBitrate		, colors[i++]);
+		
+
+		createBitrateSerie("PacingLimit"		, Metadata.pacingLimit		, colors[i++]);
 	}
 
 	//Create state series an axis
@@ -902,10 +1137,16 @@ function DisplayData (name,csv)
 		createMSSeries("RTT"		, Metadata.rtt			, colors[i++]);
 		createMSSeries("Min RTT"	, Metadata.minrtt		, colors[i++]);
 		createMSSeries("Estimated RTT"	, Metadata.estimatedrtt		, colors[i++]);
+		
 		createMSSeries("Network delay"	, Metadata.delay		, colors[i++]);
 		createMSSeries("Feedback delay"	, Metadata.fbDelay		, colors[i++]);
 		createMSSeries("Delta acumulated", Metadata.deltaAcumulated	, colors[i++]);
 		createMSSeries("Detla instant"	, Metadata.deltaInstant		, colors[i++]);
+		//createMSSeries("Probe Ramp"	, Metadata.probingAverageRampDuration		, colors[i++]);
+		//createMSSeries("Probe Max Backoff"	, Metadata.probingAverageBackoffMaxDuration		, colors[i++]);
+
+		createMSSeries("Pacing Delay"	, Metadata.pacingDelay		, colors[i++]);
+		createMSSeries("Pacing Max"	, Metadata.pacingMaxDelay		, colors[i++]);
 	}
 
 	// 	Adding this shifts the x-axis size and makes the other charts misaligned.
@@ -955,6 +1196,14 @@ function DisplayData (name,csv)
 		}
 		
 		createPacketsSeries("Packets"	, Metadata.packetRate		, "#040303ff");
+
+		// @todo Add another URL param for including probe info and modify other graphs as well.
+		//createPacketsSeries("Probe Key Ramp", Metadata.probingBurstRampKeyframes, "#040303ff");
+		//createPacketsSeries("Probe Key Count", Metadata.probingBurstRampKeyframesCount, "#040303ff");
+		//createPacketsSeries("Probe Attempts", Metadata.probingRampAttempts, "#040303ff");
+		//createPacketsSeries("layerBurstSize", Metadata.layerBurstSize, "#040303ff");
+		
+		
 	}
 
 
@@ -998,8 +1247,16 @@ function DisplayData (name,csv)
 			
 			createBpsSeries("layerBitrate", Metadata.layerBitrate, colors[i++]);
 			createBpsSeries("layerTargetBitrate", Metadata.layerTargetBitrate, colors[i++]);
-			createBpsSeries("encodingGuessBitrate", Metadata.encodingBestGuessBitrate, colors[i++]);
-			createBpsSeries("layerAvailable", Metadata.layerAvailable, colors[i++]);
+			createBpsSeries("layerAverageBitrate", Metadata.layerAverageBitrate, colors[i++]);
+			createBpsSeries("layerBurstAverageBitrate", Metadata.layerBurstAverageBitrate, colors[i++]);
+			createBpsSeries("layerBurstMaxBitrate", Metadata.layerBurstMaxBitrate, colors[i++]);
+			createBpsSeries("linkEstimatedBitrate", Metadata.linkEstimatedBitrate, colors[i++]);
+
+			// @todo Not a bps but need on a graph somewhere
+			createBpsSeries("Probe Key Ramp", Metadata.probingBurstRampKeyframes, "#040303ff");
+			createBpsSeries("Probe Key Count", Metadata.probingBurstRampKeyframesCount, "#040303ff");
+			createBpsSeries("Probe Attempts", Metadata.probingRampAttempts, "#040303ff");
+			createBpsSeries("Keyframe", Metadata.probingKeyframes, "#040303ff");
 		}
 
 		//Create track/layer names series and axis
@@ -1017,7 +1274,7 @@ function DisplayData (name,csv)
 			layerAxis.renderer.grid.template.strokeOpacity = 0.07;
 			layerAxis.tooltip.disabled = true;
 			layerAxis.min = layerAxis.minDefined = 0;
-			layerAxis.max = layerAxis.maxDefined = MetadataEventType.FLUSH;
+			layerAxis.max = layerAxis.maxDefined = MetadataEventType.MAX;
 
 			// ideally we will also change the tooltip text but not sure yet how to do this mapping as some kind of custom function instead of using tooltipText
 			layerAxis.renderer.labels.template.adapter.add("text", (label, target, key) => {
@@ -1029,6 +1286,7 @@ function DisplayData (name,csv)
 					else if (v === MetadataEventType.BLOCKED_FEEDBACK) return '[#040303ff] Blocked(2)';
 					else if (v === MetadataEventType.NONTWCC)          return '[#040303ff] NonTWCC(3)';
 					else if (v === MetadataEventType.FLUSH)            return '[#040303ff] Flush(4)';
+					else if (v === MetadataEventType.PROBE)            return '[#040303ff] Probe(5)';
 				}
 				return label;
 			});
@@ -1057,6 +1315,8 @@ function DisplayData (name,csv)
 			
 			createLayersSeries("trackId"		, Metadata.trackNumber, colors[i++], Metadata.trackId);
 			createLayersSeries("encodingId"		, Metadata.encodingNumber, colors[i++],  Metadata.encodingId);
+			//createLayersSeries("probeId"		, Metadata.probingEncodingNumber, colors[i++],  Metadata.probingEncodingId);
+			
 			createLayersSeries("smoothTransition"		, Metadata.switchedFromSmooth, colors[i++],  Metadata.smoothTransition);
 			createLayersSeries("eventType"		, Metadata.eventType, "#040303ff",  Metadata.eventType);
 			createLayersSeries("sequence"		, Metadata.seqPoint, colors[i++],  Metadata.transportSeqNum);
